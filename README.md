@@ -1,76 +1,129 @@
 # macOS Storage Clearer
 
-CLI Bash dùng để audit dung lượng macOS, giải thích nguyên nhân theo reason matrix và chỉ chạy cleanup sau khi người dùng chọn option rồi nhập approval phrase chính xác.
+`storage-clearer` is a Bash 3.2-compatible CLI for auditing macOS disk usage, explaining likely causes through a reason matrix, and building a reviewable cleanup plan before anything is deleted.
 
-Script mặc định là read-only. Chạy không có tham số tương đương với `audit`.
+The default command is a read-only audit. Cleanup is only available through the interactive `run` command after the user selects a package and enters the exact approval phrase shown by the program.
 
-Khi stdout/stderr gắn với terminal tương tác, audit hiển thị spinner cho từng phase dài để biết tiến trình vẫn đang chạy. Khi redirect output hoặc chạy CI, spinner tự chuyển thành status line tĩnh. Có thể chủ động tắt animation bằng:
+## Why this exists
+
+macOS can group Docker data, Xcode Simulator runtimes, developer caches, and other files under the broad **System Data** category. Generic cleanup commands often hide what they remove and may mix rebuildable files with valuable data.
+
+This tool separates the workflow into four explicit stages:
+
+1. **Triage** — collect storage facts without changing the machine.
+2. **Explain** — show the evidence, risk, policy, and recommendation for each category.
+3. **Plan** — preview the exact cleanup actions in Package A, Package B, or a custom selection.
+4. **Run** — revalidate destructive targets and execute only after interactive approval.
+
+## Quick start
+
+```bash
+git clone https://github.com/khiemnd777/storage-clearer.git
+cd storage-clearer
+chmod +x storage-clearer.sh
+
+./storage-clearer.sh audit
+./storage-clearer.sh explain all
+./storage-clearer.sh plan B
+./storage-clearer.sh run
+```
+
+Running the script without arguments is equivalent to `audit`.
+
+## Commands
+
+```text
+./storage-clearer.sh audit
+./storage-clearer.sh explain [all|ACTION-ID]
+./storage-clearer.sh reason [all|ACTION-ID]
+./storage-clearer.sh plan [A|B]
+./storage-clearer.sh run
+./storage-clearer.sh help
+./storage-clearer.sh version
+```
+
+| Command | Changes data? | Purpose |
+| --- | --- | --- |
+| `audit` | No | Collect facts and display the storage summary and reason matrix. |
+| `explain` / `reason` | No | Show evidence, impact, policy, and recommendation for one or all action IDs. |
+| `plan A` / `plan B` | No | Preview the actions included in a predefined cleanup package. |
+| `run` | Potentially | Select a package interactively, review the plan, approve it, revalidate targets, and execute. |
+
+## Cleanup options
+
+### Package A — conservative
+
+- Docker stopped containers.
+- Docker images no longer referenced by a container.
+- Docker build cache.
+- Rebuildable npm, Bun, Gradle, Go, Pub, pnpm, and Playwright caches.
+- Simulator devices whose runtimes are no longer available.
+
+### Package B — reviewed machine cleanup
+
+Package B includes Package A and removes older iOS Simulator runtimes while always keeping the newest installed iOS runtime.
+
+Runtime removal uses the official `xcrun simctl runtime delete` API. The script never directly removes system runtime directories with `rm`.
+
+### Custom
+
+Custom mode allows individual actions to be selected. Unused Docker volumes are classified as `HIGH` risk and require an approval phrase containing the additional words `INCLUDING VOLUMES`.
+
+## Data excluded from Package A and Package B
+
+The predefined packages never delete:
+
+- Docker volumes.
+- Browser profiles or website data.
+- Source code or generated data inside `~/Works`.
+- Codex session history in `~/.codex/sessions`.
+- Photos, Mail, Messages, MobileSync backups, or Trash.
+- APFS or macOS snapshots.
+
+Browser data, `~/Works`, and Codex sessions may appear in the reason matrix for review, but they do not have automatic cleanup actions.
+
+## Safety model
+
+- Cleanup refuses to run under `sudo` or as the `root` user.
+- `audit`, `explain`, `reason`, and `plan` are read-only.
+- `run` requires an interactive terminal and an exact typed approval phrase.
+- Cache deletion is limited to a fixed allowlist of paths inside the current user's home directory.
+- Cache targets that are symbolic links are rejected.
+- Go caches are cleaned with `go clean -modcache -cache -testcache`; permissions are not changed to force removal.
+- Simulator runtime UUIDs and Docker volume targets are revalidated immediately before execution.
+- Docker cleanup uses official prune commands and never directly deletes `Docker.raw`.
+- Every cleanup command is recorded under `~/Library/Logs/storage-clearer/`.
+- Free space is measured before and after execution.
+
+Review every plan before approving it. Close Xcode, Simulator, and active build processes before running cleanup.
+
+## Audit animation
+
+When stdout and stderr are connected to an interactive terminal, long audit phases display a spinner so the user can see that collection is still running.
+
+When output is redirected or the script runs in CI, the spinner automatically becomes a static status line. Animation can also be disabled explicitly:
 
 ```bash
 SC_NO_ANIMATION=1 ./storage-clearer.sh audit
 ```
 
-## Luồng sử dụng
+## Requirements and permissions
 
-```bash
-chmod +x storage-clearer.sh
-./storage-clearer.sh audit
-./storage-clearer.sh explain all
-./storage-clearer.sh reason simulator-old-runtimes
-./storage-clearer.sh plan B
-./storage-clearer.sh run
-```
+- macOS with the system Bash 3.2 or a compatible Bash version.
+- Docker Desktop is optional, but it must be running to audit or clean Docker objects.
+- Xcode and `xcrun simctl` are optional and only required for Simulator inspection and cleanup.
+- Full Disk Access for the terminal is recommended for a more complete audit.
 
-Các command `audit`, `explain` và `plan` không xoá hoặc thay đổi dữ liệu. Chỉ `run` có khả năng cleanup; command này yêu cầu terminal tương tác, hiển thị lại plan và bắt nhập approval phrase chính xác.
+After Docker prune operations, space is released inside the Docker VM immediately. The free-space value reported by macOS may update later, after Docker Desktop performs TRIM or compaction on `Docker.raw`.
 
-## Các option
-
-### Package A — conservative
-
-- Docker stopped containers.
-- Docker images không còn được container tham chiếu.
-- Docker build cache.
-- Cache tái tạo được của npm, Bun, Gradle, Go, Pub, pnpm và Playwright.
-- Simulator devices đã mất runtime.
-
-### Package B — lựa chọn cho máy đã audit
-
-Bao gồm Package A và xoá các iOS Simulator runtime cũ, luôn giữ runtime iOS có version mới nhất. Runtime được xoá bằng API chính thức `xcrun simctl runtime delete`; script không `rm` trực tiếp thư mục runtime hệ thống.
-
-### Custom
-
-Cho phép chọn từng action. Docker unused volumes được đánh dấu `HIGH` và yêu cầu approval phrase có thêm `INCLUDING VOLUMES`.
-
-## Những dữ liệu luôn bị loại trừ khỏi A/B
-
-- Docker volumes.
-- Dữ liệu website/trình duyệt.
-- Source và dữ liệu trong `~/Works`.
-- Lịch sử Codex trong `~/.codex/sessions`.
-- Photos, Mail, Messages, MobileSync và Trash.
-- APFS/macOS snapshots.
-
-Các nhóm browser, Works và Codex vẫn xuất hiện trong reason matrix để review, nhưng không có action tự động.
-
-## Guard an toàn
-
-- Từ chối chạy cleanup bằng `sudo` hoặc user `root`.
-- Cache deletion chỉ chấp nhận danh sách đường dẫn cố định bên trong user home.
-- Từ chối cache target là symlink.
-- Go module/build cache được dọn bằng `go clean -modcache -cache -testcache` vì Go cố ý đặt module cache ở chế độ read-only; script không đổi permission để ép xoá.
-- Revalidate UUID của Simulator runtime và danh sách Docker volume trước khi execute.
-- Dùng lệnh prune chính thức của Docker; không bao giờ xoá trực tiếp `Docker.raw`.
-- Ghi log execution vào `~/Library/Logs/storage-clearer/`.
-- Đo free space trước và sau cleanup.
-
-Nên đóng Xcode, Simulator và các build process trước khi chạy `run`. Docker Desktop cần đang chạy để audit và cleanup Docker. Full Disk Access cho Terminal giúp kết quả audit đầy đủ hơn.
-
-Sau Docker prune, dung lượng bên trong VM được giải phóng ngay nhưng free space phía macOS có thể cập nhật chậm cho tới khi Docker Desktop chạy TRIM/compaction.
-
-## Kiểm thử
+## Tests
 
 ```bash
 ./tests/test_storage_clearer.sh
 ```
 
-Test chỉ kiểm tra cú pháp, package policy và allowlist guard; không chạy cleanup.
+The test suite checks shell syntax, package policy, cache allowlist guards, runtime identifiers, the executable action registry, help output, and spinner fallback behavior. It does not execute cleanup actions.
+
+## Contributing
+
+Issues and pull requests are welcome, especially for additional macOS storage categories, safety reviews, and Bash 3.2 compatibility improvements.
