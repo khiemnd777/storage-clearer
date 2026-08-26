@@ -48,6 +48,59 @@ if sc_contains_action "${package_b}" ai-assistant-caches; then
 fi
 pass "read-only categories excluded from Package B"
 
+[ "$(sc_size_to_bytes '617.2MB')" = "617200000" ] || fail "decimal Docker size parsing"
+[ "$(sc_size_to_bytes '6.172e+08B')" = "617200000" ] || fail "scientific Docker size parsing"
+[ "$(sc_size_to_bytes '-6.172e+08B')" = "0" ] || fail "negative Docker size is clamped to zero"
+if sc_size_to_bytes 'not-a-size' >/dev/null 2>&1; then
+  fail "invalid Docker size must be rejected"
+fi
+[ "$(sc_docker_size_display '617.2MB (3%)')" = "617.20 MB" ] || fail "Docker percentage suffix formatting"
+[ "$(sc_docker_size_display '6.172e+08B')" = "617.20 MB" ] || fail "scientific Docker size formatting"
+[ "$(sc_docker_size_display '-6.172e+08B')" = "0 B" ] || fail "negative Docker size formatting"
+[ "$(sc_docker_size_display 'unknown')" = "unknown" ] || fail "unknown Docker size remains unknown"
+sc_docker_size_is_negative '-6.172e+08B' || fail "negative Docker size detection"
+if sc_docker_size_is_negative '617.2MB'; then
+  fail "positive Docker size must not be marked negative"
+fi
+
+docker_fixture_state="$(
+  docker() {
+    printf '%s\n' \
+      'Images|21|4|21.13GB|-6.172e+08B (-3%)' \
+      'Containers|8|3|1.2GB|600MB (50%)' \
+      'Local Volumes|5|4|900MB|100MB (11%)' \
+      'Build Cache|12|0|3GB|2.5GB (83%)'
+  }
+  SC_DOCKER_READY=0
+  sc_collect_docker
+  printf '%s|%s|%s|%s' \
+    "${SC_DOCKER_READY}" \
+    "${SC_DOCKER_IMAGES_TOTAL}" \
+    "${SC_DOCKER_IMAGES_RECLAIM}" \
+    "$(sc_action_estimate docker-unused-images)"
+)"
+[ "${docker_fixture_state}" = "1|21.13GB|-6.172e+08B|0 B" ] || fail "Docker collector normalizes the Issue #2 fixture"
+
+SC_DOCKER_IMAGES_TOTAL="21.13GB"
+SC_DOCKER_IMAGES_RECLAIM="-6.172e+08B"
+[ "$(sc_action_estimate docker-unused-images)" = "0 B" ] || fail "negative Docker estimate is zero"
+[ "$(sc_action_estimate_bytes docker-unused-images)" = "0" ] || fail "negative Docker estimate contributes zero bytes"
+docker_negative_explanation="$(sc_explain_action docker-unused-images)"
+printf '%s\n' "${docker_negative_explanation}" | grep -q 'Estimate: 0 B' || fail "negative Docker estimate is human-readable"
+printf '%s\n' "${docker_negative_explanation}" | grep -q 'Evidence: Images total 21.13 GB; reclaimable 0 B\.' || fail "Docker evidence uses normalized sizes"
+printf '%s\n' "${docker_negative_explanation}" | grep -q 'invalid negative reclaimable value; treated as zero' || fail "Docker negative anomaly is explained"
+if printf '%s\n' "${docker_negative_explanation}" | grep -Eq -- '-[0-9]|[eE][+-][0-9]'; then
+  fail "Docker explanation must not expose negative or scientific sizes"
+fi
+docker_negative_plan="$(sc_show_plan docker-unused-images)"
+printf '%s\n' "${docker_negative_plan}" | grep -q 'Approximate package total: 0 B' || fail "negative Docker size cannot reduce package total"
+if printf '%s\n' "${docker_negative_plan}" | grep -Eq -- 'estimate -|total: -|[eE][+-][0-9]'; then
+  fail "Docker plan must not expose negative or scientific sizes"
+fi
+SC_DOCKER_IMAGES_RECLAIM="6.172e+08B"
+[ "$(sc_action_estimate docker-unused-images)" = "617.20 MB" ] || fail "positive scientific estimate is normalized"
+pass "Docker reclaimable size normalization"
+
 for cache_target in \
   "${SC_USER_HOME}/.npm/_cacache" \
   "${SC_USER_HOME}/Library/Caches/pip" \
