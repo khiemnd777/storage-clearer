@@ -7,7 +7,7 @@
 set -u
 set -o pipefail
 
-SC_VERSION="1.2.0"
+SC_VERSION="1.3.0"
 SC_USER_HOME="${HOME:?HOME is not set}"
 SC_DATA_MOUNT="/"
 SC_TEMP_DIR=""
@@ -19,6 +19,10 @@ SC_SPINNER_PID=""
 SC_SPINNER_MESSAGE=""
 SC_SPINNER_STATIC=0
 SC_SPINNER_STARTED_SECONDS=0
+SC_SELECTED_ACTIONS=""
+SC_TM_THIN_GIB=""
+SC_TM_THIN_BYTES=0
+SC_TM_THIN_URGENCY=""
 
 SC_DISK_TOTAL_BYTES=0
 SC_DISK_USED_BYTES=0
@@ -112,10 +116,12 @@ SC_EXECUTABLE_ACTIONS=(
   "simulator-old-runtimes"
   "simulator-unavailable-devices"
   "docker-unused-volumes"
+  "time-machine-thin"
 )
 
 SC_MATRIX_ACTIONS=(
   "time-machine-snapshots"
+  "time-machine-thin"
   "docker-build-cache"
   "docker-unused-images"
   "docker-stopped-containers"
@@ -574,6 +580,7 @@ sc_collect_facts() {
 sc_action_label() {
   case "$1" in
     time-machine-snapshots) printf 'Time Machine/APFS snapshots' ;;
+    time-machine-thin) printf 'Time Machine snapshot thinning' ;;
     docker-stopped-containers) printf 'Docker stopped containers' ;;
     docker-unused-images) printf 'Docker unused images' ;;
     docker-build-cache) printf 'Docker build cache' ;;
@@ -593,7 +600,7 @@ sc_action_risk() {
   case "$1" in
     docker-build-cache|docker-unused-images|docker-stopped-containers|dev-caches|simulator-unavailable-devices) printf 'LOW' ;;
     simulator-old-runtimes|browser-site-data|works-generated) printf 'MEDIUM' ;;
-    docker-unused-volumes|time-machine-snapshots|codex-sessions) printf 'HIGH' ;;
+    docker-unused-volumes|time-machine-snapshots|time-machine-thin|codex-sessions) printf 'HIGH' ;;
     ai-assistant-caches) printf 'MEDIUM' ;;
     *) printf 'UNKNOWN' ;;
   esac
@@ -603,7 +610,7 @@ sc_action_option() {
   case "$1" in
     docker-build-cache|docker-unused-images|docker-stopped-containers|dev-caches|simulator-unavailable-devices) printf 'A/B/Custom' ;;
     simulator-old-runtimes) printf 'B/Custom' ;;
-    docker-unused-volumes) printf 'Custom only' ;;
+    docker-unused-volumes|time-machine-thin) printf 'Custom only' ;;
     browser-site-data|works-generated|time-machine-snapshots|ai-assistant-caches|codex-sessions) printf 'Manual review' ;;
     *) printf '-' ;;
   esac
@@ -612,6 +619,13 @@ sc_action_option() {
 sc_action_estimate() {
   case "$1" in
     time-machine-snapshots) printf 'unknown' ;;
+    time-machine-thin)
+      if [ -n "${SC_TM_THIN_GIB}" ]; then
+        printf 'up to %s GiB' "${SC_TM_THIN_GIB}"
+      else
+        printf 'user-defined'
+      fi
+      ;;
     docker-build-cache) printf '%s' "${SC_DOCKER_BUILD_RECLAIM}" ;;
     docker-unused-images) printf '%s' "${SC_DOCKER_IMAGES_RECLAIM}" ;;
     docker-stopped-containers) printf '%s' "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
@@ -630,6 +644,7 @@ sc_action_estimate() {
 sc_action_estimate_bytes() {
   case "$1" in
     time-machine-snapshots) printf '0' ;;
+    time-machine-thin) printf '0' ;;
     docker-build-cache) sc_size_to_bytes "${SC_DOCKER_BUILD_RECLAIM}" ;;
     docker-unused-images) sc_size_to_bytes "${SC_DOCKER_IMAGES_RECLAIM}" ;;
     docker-stopped-containers) sc_size_to_bytes "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
@@ -648,6 +663,7 @@ sc_action_estimate_bytes() {
 sc_action_reason_short() {
   case "$1" in
     time-machine-snapshots) printf 'Point-in-time copies can retain blocks after files are deleted' ;;
+    time-machine-thin) printf 'macOS may reclaim local snapshot blocks up to a user-approved target' ;;
     docker-build-cache) printf 'Rebuildable layers; no active cache ownership' ;;
     docker-unused-images) printf 'Not referenced by any container' ;;
     docker-stopped-containers) printf 'Stopped writable layers only' ;;
@@ -695,6 +711,19 @@ sc_print_reason_matrix() {
   done
 }
 
+sc_print_tm_snapshot_evidence() {
+  local snapshot_name
+  sc_info "  Evidence: Time Machine snapshots: ${SC_TM_SNAPSHOT_COUNT}; Data-volume APFS snapshots: ${SC_APFS_DATA_SNAPSHOT_COUNT}."
+  if [ -n "${SC_TM_SNAPSHOT_FILE}" ] && [ -s "${SC_TM_SNAPSHOT_FILE}" ]; then
+    while IFS= read -r snapshot_name; do
+      [ -n "${snapshot_name}" ] || continue
+      sc_info "            $(sc_tm_snapshot_timestamp "${snapshot_name}") — ${snapshot_name}"
+    done < "${SC_TM_SNAPSHOT_FILE}"
+  elif [ "${SC_TM_SNAPSHOT_COUNT}" = "unknown" ]; then
+    sc_info "            Snapshot names unavailable; tmutil may be missing or the terminal may need Full Disk Access."
+  fi
+}
+
 sc_explain_action() {
   local action="$1"
   local target
@@ -704,16 +733,18 @@ sc_explain_action() {
   sc_info "  Options:  $(sc_action_option "${action}")"
   case "${action}" in
     time-machine-snapshots)
-      sc_info "  Evidence: Time Machine snapshots: ${SC_TM_SNAPSHOT_COUNT}; Data-volume APFS snapshots: ${SC_APFS_DATA_SNAPSHOT_COUNT}."
-      if [ -n "${SC_TM_SNAPSHOT_FILE}" ] && [ -s "${SC_TM_SNAPSHOT_FILE}" ]; then
-        while IFS= read -r snapshot_name; do
-          [ -n "${snapshot_name}" ] || continue
-          sc_info "            $(sc_tm_snapshot_timestamp "${snapshot_name}") — ${snapshot_name}"
-        done < "${SC_TM_SNAPSHOT_FILE}"
-      elif [ "${SC_TM_SNAPSHOT_COUNT}" = "unknown" ]; then
-        sc_info "            Snapshot names unavailable; tmutil may be missing or the terminal may need Full Disk Access."
+      sc_print_tm_snapshot_evidence
+      sc_info "  Effect: Report-only inventory. macOS normally removes local snapshots as they age or when space is needed."
+      ;;
+    time-machine-thin)
+      sc_print_tm_snapshot_evidence
+      if [ -n "${SC_TM_THIN_GIB}" ]; then
+        sc_info "  Request: Reclaim up to ${SC_TM_THIN_GIB} GiB at urgency ${SC_TM_THIN_URGENCY}."
+        sc_info "           $(sc_action_preview_command time-machine-thin)"
+      else
+        sc_info "  Request: GiB target and urgency are collected only after choosing this Custom action."
       fi
-      sc_info "  Effect: Report-only. macOS manages local snapshots; no snapshot cleanup action is registered."
+      sc_info "  Effect: HIGH risk. Local restore points may disappear. Uses tmutil only; never rm or automatic sudo."
       ;;
     docker-build-cache)
       sc_info "  Evidence: Docker build cache total ${SC_DOCKER_BUILD_TOTAL}; reclaimable ${SC_DOCKER_BUILD_RECLAIM}."
@@ -813,6 +844,88 @@ EOF
   return 1
 }
 
+sc_selected_action_count() {
+  printf '%s\n' "${1:-}" | awk 'NF {count++} END {print count + 0}'
+}
+
+sc_configure_tm_thin_request() {
+  local requested_gib="${1:-}"
+  local urgency="${2:-}"
+  local canonical_gib requested_bytes
+
+  case "${requested_gib}" in
+    ''|*[!0-9]*)
+      sc_warn "Snapshot thinning target must be a whole number of GiB."
+      return 1
+      ;;
+  esac
+  canonical_gib="$(awk -v value="${requested_gib}" 'BEGIN {printf "%.0f", value + 0}')"
+  if awk -v value="${canonical_gib}" 'BEGIN {exit !(value < 1)}'; then
+    sc_warn "Snapshot thinning target must be at least 1 GiB."
+    return 1
+  fi
+  case "${urgency}" in
+    1|2|3|4) ;;
+    *)
+      sc_warn "Snapshot thinning urgency must be an integer from 1 to 4."
+      return 1
+      ;;
+  esac
+
+  requested_bytes="$(awk -v gib="${canonical_gib}" 'BEGIN {printf "%.0f", gib * 1073741824}')"
+  case "${SC_DISK_TOTAL_BYTES}" in
+    ''|*[!0-9]*|0)
+      sc_warn "Audited disk capacity is unavailable; refusing to size a snapshot thinning request."
+      return 1
+      ;;
+    *)
+      if awk -v requested="${requested_bytes}" -v total="${SC_DISK_TOTAL_BYTES}" 'BEGIN {exit !(total > 0 && requested > total)}'; then
+        sc_warn "Snapshot thinning target cannot exceed the audited disk capacity."
+        return 1
+      fi
+      ;;
+  esac
+
+  SC_TM_THIN_GIB="${canonical_gib}"
+  SC_TM_THIN_BYTES="${requested_bytes}"
+  SC_TM_THIN_URGENCY="${urgency}"
+  return 0
+}
+
+sc_validate_selected_policy() {
+  local selected="$1"
+  if sc_contains_action "${selected}" time-machine-thin; then
+    if [ "$(sc_selected_action_count "${selected}")" -ne 1 ]; then
+      sc_warn "Time Machine snapshot thinning must be reviewed and run by itself."
+      return 1
+    fi
+    case "${SC_TM_SNAPSHOT_COUNT}" in
+      ''|*[!0-9]*|0)
+        sc_warn "Snapshot thinning requires a successful audit with at least one local Time Machine snapshot."
+        return 1
+        ;;
+    esac
+    if [ -z "${SC_TM_THIN_GIB}" ] || [ "${SC_TM_THIN_BYTES}" -le 0 ] || [ -z "${SC_TM_THIN_URGENCY}" ]; then
+      sc_warn "Snapshot thinning parameters are incomplete."
+      return 1
+    fi
+  fi
+  return 0
+}
+
+sc_approval_phrase() {
+  local selected="$1"
+  local package_name="$2"
+  if sc_contains_action "${selected}" time-machine-thin; then
+    [ -n "${SC_TM_THIN_GIB}" ] || return 1
+    printf 'THIN TIME MACHINE SNAPSHOTS %s GIB' "${SC_TM_THIN_GIB}"
+  elif sc_contains_action "${selected}" docker-unused-volumes; then
+    printf 'DELETE %s INCLUDING VOLUMES' "${package_name}"
+  else
+    printf 'DELETE %s' "${package_name}"
+  fi
+}
+
 sc_action_preview_command() {
   local action="$1"
   case "${action}" in
@@ -823,6 +936,13 @@ sc_action_preview_command() {
     dev-caches) printf 'remove allowlisted developer cache directories only' ;;
     simulator-old-runtimes) printf 'xcrun simctl runtime delete <old-runtime-uuid>' ;;
     simulator-unavailable-devices) printf 'xcrun simctl delete unavailable' ;;
+    time-machine-thin)
+      if [ -n "${SC_TM_THIN_GIB}" ]; then
+        printf 'tmutil thinlocalsnapshots / %s %s' "${SC_TM_THIN_BYTES}" "${SC_TM_THIN_URGENCY}"
+      else
+        printf 'tmutil thinlocalsnapshots / <approved-bytes> <urgency-1..4>'
+      fi
+      ;;
     *) printf 'report only' ;;
   esac
 }
@@ -842,9 +962,17 @@ sc_show_plan() {
   done <<EOF
 ${selected}
 EOF
-  sc_info "  Approximate package total: $(sc_human_bytes "${total_bytes}")"
+  if sc_contains_action "${selected}" time-machine-thin; then
+    sc_info "  Approved reclaim request: up to ${SC_TM_THIN_GIB} GiB (macOS may reclaim less)"
+  else
+    sc_info "  Approximate package total: $(sc_human_bytes "${total_bytes}")"
+  fi
   sc_info ""
-  sc_info "Explicit exclusions: Docker volumes (unless Custom), browser site data, Works source/data, Codex sessions, Photos, Mail, and macOS snapshots."
+  if sc_contains_action "${selected}" time-machine-thin; then
+    sc_info "Snapshot scope: local Time Machine snapshots only through tmutil; APFS update snapshots remain excluded."
+  else
+    sc_info "Explicit exclusions: Docker volumes (unless Custom), browser site data, Works source/data, Codex sessions, Photos, Mail, and macOS snapshots."
+  fi
 }
 
 sc_is_executable_action() {
@@ -856,7 +984,11 @@ sc_is_executable_action() {
 }
 
 sc_custom_actions() {
-  local answer token selected="" old_ifs
+  local answer token selected="" old_ifs requested_gib urgency
+  SC_SELECTED_ACTIONS=""
+  SC_TM_THIN_GIB=""
+  SC_TM_THIN_BYTES=0
+  SC_TM_THIN_URGENCY=""
   sc_info ""
   sc_info "Custom actions"
   sc_info "  1) Docker stopped containers       LOW"
@@ -866,6 +998,7 @@ sc_custom_actions() {
   sc_info "  5) Old iOS runtimes                MEDIUM"
   sc_info "  6) Unavailable simulator devices   LOW"
   sc_info "  7) Docker unused volumes            HIGH"
+  sc_info "  8) Time Machine snapshot thinning   HIGH (run alone)"
   printf 'Choose comma-separated numbers, or press Enter to cancel: '
   IFS= read -r answer
   [ -n "${answer}" ] || return 1
@@ -897,11 +1030,34 @@ sc_custom_actions() {
 }simulator-unavailable-devices" ;;
       7) selected="${selected}${selected:+
 }docker-unused-volumes" ;;
+      8) selected="${selected}${selected:+
+}time-machine-thin" ;;
       *) sc_warn "Ignored unknown selection: ${token}" ;;
     esac
   done
   [ -n "${selected}" ] || return 1
-  printf '%s\n' "${selected}"
+
+  if sc_contains_action "${selected}" time-machine-thin; then
+    if [ "$(sc_selected_action_count "${selected}")" -ne 1 ]; then
+      sc_warn "Time Machine snapshot thinning must be selected and run by itself."
+      return 1
+    fi
+    case "${SC_TM_SNAPSHOT_COUNT}" in
+      ''|*[!0-9]*|0)
+        sc_warn "No auditable local Time Machine snapshot is available to thin."
+        return 1
+        ;;
+    esac
+    sc_warn "Apple normally manages local snapshots automatically. Thinning may remove local restore points."
+    printf 'Maximum space to request in whole GiB: '
+    IFS= read -r requested_gib
+    printf 'Urgency (1=lowest, 4=highest): '
+    IFS= read -r urgency
+    sc_configure_tm_thin_request "${requested_gib}" "${urgency}" || return 1
+  fi
+
+  sc_validate_selected_policy "${selected}" || return 1
+  SC_SELECTED_ACTIONS="${selected}"
 }
 
 sc_target_signature() {
@@ -913,6 +1069,13 @@ sc_target_signature() {
     fi
     if sc_contains_action "${selected}" docker-unused-volumes && [ "${SC_DOCKER_READY}" -eq 1 ]; then
       docker volume ls -q -f dangling=true 2>/dev/null | sort | sed 's/^/volume:/'
+    fi
+    if sc_contains_action "${selected}" time-machine-thin; then
+      printf 'tm-thin:%s:%s\n' "${SC_TM_THIN_BYTES}" "${SC_TM_THIN_URGENCY}"
+      printf 'tm-count:%s\n' "${SC_TM_SNAPSHOT_COUNT}"
+      if [ -n "${SC_TM_SNAPSHOT_FILE}" ] && [ -s "${SC_TM_SNAPSHOT_FILE}" ]; then
+        sort "${SC_TM_SNAPSHOT_FILE}" | sed 's/^/snapshot:/'
+      fi
     fi
   } | shasum -a 256 | awk '{print $1}'
 }
@@ -1000,6 +1163,47 @@ sc_execute_old_runtimes() {
   return "${failed}"
 }
 
+sc_execute_time_machine_thin() {
+  if ! sc_have tmutil; then
+    sc_warn "tmutil is unavailable; snapshot thinning was not attempted."
+    return 1
+  fi
+  if [ -z "${SC_TM_THIN_GIB}" ] || [ "${SC_TM_THIN_BYTES}" -le 0 ]; then
+    sc_warn "Snapshot thinning parameters are missing; refusing execution."
+    return 1
+  fi
+  case "${SC_TM_SNAPSHOT_COUNT}" in
+    ''|*[!0-9]*|0)
+      sc_warn "No audited local Time Machine snapshot remains eligible; refusing execution."
+      return 1
+      ;;
+  esac
+  if [ -z "${SC_TM_SNAPSHOT_FILE}" ] || [ ! -s "${SC_TM_SNAPSHOT_FILE}" ]; then
+    sc_warn "Approved snapshot inventory is unavailable; refusing execution."
+    return 1
+  fi
+
+  sc_info "Local Time Machine snapshots before thinning:"
+  if ! sc_run_logged tmutil listlocalsnapshots /; then
+    sc_warn "Could not re-list local snapshots; thinning was not attempted."
+    return 1
+  fi
+
+  sc_info "Requesting up to ${SC_TM_THIN_GIB} GiB at urgency ${SC_TM_THIN_URGENCY}."
+  if ! sc_run_logged tmutil thinlocalsnapshots / "${SC_TM_THIN_BYTES}" "${SC_TM_THIN_URGENCY}"; then
+    sc_warn "tmutil could not thin local snapshots. This tool will not invoke sudo automatically."
+    sc_warn "Review Full Disk Access and the logged command before deciding whether to run it manually."
+    return 1
+  fi
+
+  sc_info "Local Time Machine snapshots after thinning:"
+  if ! sc_run_logged tmutil listlocalsnapshots /; then
+    sc_warn "Thinning completed, but the post-action snapshot inventory could not be read."
+    return 1
+  fi
+  return 0
+}
+
 sc_execute_action() {
   case "$1" in
     docker-stopped-containers)
@@ -1030,6 +1234,9 @@ sc_execute_action() {
       ;;
     simulator-unavailable-devices)
       sc_run_logged xcrun simctl delete unavailable
+      ;;
+    time-machine-thin)
+      sc_execute_time_machine_thin
       ;;
     *)
       sc_warn "Refusing unknown action: $1"
@@ -1073,7 +1280,7 @@ sc_run_interactive() {
   sc_info "Options"
   sc_info "  A) Conservative: Docker non-volume reclaim + developer caches + unavailable simulators"
   sc_info "  B) Package B: A + old iOS runtimes; newest iOS ${SC_SIM_LATEST_VERSION} is kept"
-  sc_info "  C) Custom: choose individual actions; Docker volumes are HIGH risk"
+  sc_info "  C) Custom: individual actions; Docker volumes and Time Machine thinning are HIGH risk"
   sc_info "  Q) Quit without changes"
   printf 'Choose an option: '
   IFS= read -r choice
@@ -1088,7 +1295,8 @@ sc_run_interactive() {
       package_name="PACKAGE-B"
       ;;
     C|c)
-      selected="$(sc_custom_actions)" || { sc_info "Cancelled; nothing changed."; return 0; }
+      sc_custom_actions || { sc_info "Cancelled; nothing changed."; return 0; }
+      selected="${SC_SELECTED_ACTIONS}"
       package_name="CUSTOM"
       ;;
     *)
@@ -1097,16 +1305,18 @@ sc_run_interactive() {
       ;;
   esac
 
+  sc_validate_selected_policy "${selected}" || { sc_info "Cancelled; nothing changed."; return 0; }
+
   sc_show_plan "${selected}"
   sc_info ""
   sc_warn "Close Xcode/Simulator and active build processes before continuing."
-  sc_warn "Docker volumes, browser site data, Works data, and Codex sessions are excluded unless explicitly shown above."
+  sc_warn "Docker volumes, Time Machine snapshots, browser site data, Works data, and Codex sessions are excluded unless explicitly shown above."
+  if sc_contains_action "${selected}" time-machine-thin; then
+    sc_warn "Local snapshots are restore points and macOS normally manages them automatically."
+  fi
 
   signature_before="$(sc_target_signature "${selected}")"
-  approval_phrase="DELETE ${package_name}"
-  if sc_contains_action "${selected}" docker-unused-volumes; then
-    approval_phrase="DELETE ${package_name} INCLUDING VOLUMES"
-  fi
+  approval_phrase="$(sc_approval_phrase "${selected}" "${package_name}")" || sc_die "Could not build the approval phrase."
 
   sc_info ""
   sc_info "To approve this exact plan, type: ${approval_phrase}"
@@ -1118,6 +1328,10 @@ sc_run_interactive() {
   fi
 
   sc_run_phase "Revalidating destructive Simulator targets" sc_collect_simulator
+  if sc_contains_action "${selected}" time-machine-thin; then
+    sc_run_phase "Revalidating Time Machine snapshot targets" sc_collect_disk
+    sc_validate_selected_policy "${selected}" || sc_die "Time Machine snapshot targets are no longer eligible. Run the audit again."
+  fi
   signature_after="$(sc_target_signature "${selected}")"
   if [ "${signature_before}" != "${signature_after}" ]; then
     sc_die "Targets changed after review. Run the program again and review the new plan."
@@ -1165,6 +1379,8 @@ Safety model:
   - the program refuses to run cleanup as root.
   - Package A/B never delete Docker volumes, browser site data, Works data,
     Codex sessions, Photos, Mail, or macOS snapshots.
+  - Time Machine thinning is Custom-only, runs alone, and uses tmutil without
+    automatic sudo or direct snapshot deletion.
 EOF
 }
 

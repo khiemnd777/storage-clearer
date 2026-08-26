@@ -40,6 +40,9 @@ pass "Package B action count"
 if sc_contains_action "${package_b}" time-machine-snapshots; then
   fail "Package B must exclude Time Machine snapshots"
 fi
+if sc_contains_action "${package_b}" time-machine-thin; then
+  fail "Package B must exclude Time Machine thinning"
+fi
 if sc_contains_action "${package_b}" ai-assistant-caches; then
   fail "Package B must exclude AI assistant caches"
 fi
@@ -95,6 +98,7 @@ fi
 if sc_is_executable_action time-machine-snapshots; then
   fail "Time Machine snapshots must remain report-only"
 fi
+sc_is_executable_action time-machine-thin || fail "Time Machine thinning action is registered"
 if sc_is_executable_action ai-assistant-caches; then
   fail "AI assistant caches must remain report-only"
 fi
@@ -116,8 +120,114 @@ pass "Time Machine snapshot parser"
 
 [ "$(sc_action_risk time-machine-snapshots)" = "HIGH" ] || fail "snapshot risk is HIGH"
 [ "$(sc_action_option time-machine-snapshots)" = "Manual review" ] || fail "snapshot action is manual review"
+[ "$(sc_action_risk time-machine-thin)" = "HIGH" ] || fail "snapshot thinning risk is HIGH"
+[ "$(sc_action_option time-machine-thin)" = "Custom only" ] || fail "snapshot thinning is Custom only"
 [ "$(sc_action_option ai-assistant-caches)" = "Manual review" ] || fail "AI caches are manual review"
 pass "read-only reason matrix policy"
+
+SC_DISK_TOTAL_BYTES=536870912000
+sc_configure_tm_thin_request 40 4 || fail "valid Time Machine thinning request"
+[ "${SC_TM_THIN_GIB}" = "40" ] || fail "Time Machine GiB target"
+[ "${SC_TM_THIN_BYTES}" = "42949672960" ] || fail "Time Machine GiB-to-bytes conversion"
+[ "${SC_TM_THIN_URGENCY}" = "4" ] || fail "Time Machine urgency"
+[ "$(sc_approval_phrase time-machine-thin CUSTOM)" = "THIN TIME MACHINE SNAPSHOTS 40 GIB" ] || fail "dedicated Time Machine approval phrase"
+[ "$(sc_action_preview_command time-machine-thin)" = "tmutil thinlocalsnapshots / 42949672960 4" ] || fail "exact tmutil preview"
+tm_plan="$(sc_show_plan time-machine-thin)"
+printf '%s' "${tm_plan}" | grep -q 'tmutil thinlocalsnapshots / 42949672960 4' || fail "Time Machine plan shows exact command"
+printf '%s' "${tm_plan}" | grep -q 'Approved reclaim request: up to 40 GiB' || fail "Time Machine plan shows approved target"
+printf '%s' "${tm_plan}" | grep -q 'APFS update snapshots remain excluded' || fail "Time Machine plan preserves APFS update snapshots"
+if sc_configure_tm_thin_request 0 4 2>/dev/null; then
+  fail "zero GiB target must be rejected"
+fi
+if sc_configure_tm_thin_request 1.5 4 2>/dev/null; then
+  fail "fractional GiB target must be rejected"
+fi
+if sc_configure_tm_thin_request 40 5 2>/dev/null; then
+  fail "urgency outside 1-4 must be rejected"
+fi
+if sc_configure_tm_thin_request 501 4 2>/dev/null; then
+  fail "target larger than disk capacity must be rejected"
+fi
+SC_DISK_TOTAL_BYTES=0
+if sc_configure_tm_thin_request 40 4 2>/dev/null; then
+  fail "snapshot thinning requires audited disk capacity"
+fi
+SC_DISK_TOTAL_BYTES=536870912000
+pass "Time Machine thinning parameter validation"
+
+SC_TM_SNAPSHOT_COUNT=2
+sc_configure_tm_thin_request 40 4 || fail "restore valid Time Machine request"
+sc_validate_selected_policy time-machine-thin || fail "eligible Time Machine selection"
+mixed_tm_selection="$(printf '%s\n' time-machine-thin dev-caches)"
+if sc_validate_selected_policy "${mixed_tm_selection}" 2>/dev/null; then
+  fail "Time Machine thinning must run alone"
+fi
+SC_TM_SNAPSHOT_COUNT=0
+if sc_validate_selected_policy time-machine-thin 2>/dev/null; then
+  fail "Time Machine thinning requires an audited snapshot"
+fi
+SC_TM_SNAPSHOT_COUNT=2
+sc_custom_actions >/dev/null 2>&1 <<'EOF' || fail "Custom Time Machine configuration"
+8
+40
+4
+EOF
+[ "${SC_SELECTED_ACTIONS}" = "time-machine-thin" ] || fail "Custom selection stores Time Machine action"
+if sc_custom_actions >/dev/null 2>&1 <<'EOF'
+1,8
+EOF
+then
+  fail "Custom selection must reject mixed Time Machine actions"
+fi
+sc_custom_actions >/dev/null 2>&1 <<'EOF' || fail "ordinary Custom selection"
+1,4
+EOF
+[ "${SC_SELECTED_ACTIONS}" = "$(printf '%s\n' docker-stopped-containers dev-caches)" ] || fail "ordinary Custom actions remain selectable"
+pass "Time Machine Custom-only policy"
+
+sc_ensure_temp
+printf '%s\n' 'com.apple.TimeMachine.2026-08-22-133354.local' > "${SC_TM_SNAPSHOT_FILE}"
+SC_TM_SNAPSHOT_COUNT=1
+sc_configure_tm_thin_request 40 4 || fail "signature request configuration"
+tm_signature_before="$(sc_target_signature time-machine-thin)"
+printf '%s\n' 'com.apple.TimeMachine.2026-08-23-133836.local' >> "${SC_TM_SNAPSHOT_FILE}"
+SC_TM_SNAPSHOT_COUNT=2
+tm_signature_after="$(sc_target_signature time-machine-thin)"
+[ "${tm_signature_before}" != "${tm_signature_after}" ] || fail "snapshot inventory change must alter target signature"
+pass "Time Machine target signature"
+
+tmutil_mock_log="${SC_TEMP_DIR}/tmutil-mock.log"
+tmutil_exec_log="${SC_TEMP_DIR}/tmutil-exec.log"
+(
+  sc_have() {
+    [ "$1" = "tmutil" ]
+  }
+  tmutil() {
+    printf '%s\n' "$*" >> "${tmutil_mock_log}"
+    case "$1" in
+      listlocalsnapshots)
+        printf '%s\n' 'Snapshots for disk /:' 'com.apple.TimeMachine.2026-08-22-133354.local'
+        ;;
+      thinlocalsnapshots)
+        printf '%s\n' 'mock thinning complete'
+        ;;
+      *) return 1 ;;
+    esac
+  }
+  SC_EXEC_LOG="${tmutil_exec_log}"
+  SC_TM_THIN_GIB=40
+  SC_TM_THIN_BYTES=42949672960
+  SC_TM_THIN_URGENCY=4
+  sc_execute_time_machine_thin >/dev/null
+) || fail "mocked Time Machine execution"
+[ "$(grep -c '^listlocalsnapshots /$' "${tmutil_mock_log}")" -eq 2 ] || fail "before and after snapshot inventories"
+grep -q '^thinlocalsnapshots / 42949672960 4$' "${tmutil_mock_log}" || fail "mock received exact tmutil thinning command"
+if grep -q 'sudo\|rm ' "${tmutil_mock_log}"; then
+  fail "Time Machine execution must not invoke sudo or rm"
+fi
+grep -q '^+ tmutil listlocalsnapshots /$' "${tmutil_exec_log}" || fail "execution log records snapshot inventory commands"
+grep -q '^+ tmutil thinlocalsnapshots / 42949672960 4$' "${tmutil_exec_log}" || fail "execution log records exact thinning command"
+pass "mocked Time Machine execution"
 
 help_output="$(SC_SKIP_MAIN=0 /bin/bash "${SCRIPT_PATH}" help)" || fail "help command"
 printf '%s' "${help_output}" | grep -q 'audit' || fail "help mentions audit"
