@@ -264,17 +264,30 @@ sc_human_bytes() {
 }
 
 sc_size_to_bytes() {
-  awk -v raw="${1:-0}" 'BEGIN {
+  awk -v raw="${1:-}" 'BEGIN {
     value = raw
     gsub(/[[:space:]]/, "", value)
+    if (value == "" || value == "unknown") exit 1
+    if (value !~ /^[-+]?(([0-9]+([.][0-9]*)?)|([.][0-9]+))([eE][-+]?[0-9]+)?([kKmMgGtT]([iI])?[bB]|[kKmMgGtT]|[bB])?$/) exit 1
     number = value + 0
+    if (number < 0) {
+      print "0"
+      exit
+    }
     unit = value
-    sub(/^[0-9.]+/, "", unit)
+    sub(/^[-+]?(([0-9]+([.][0-9]*)?)|([.][0-9]+))([eE][-+]?[0-9]+)?/, "", unit)
+    unit = toupper(unit)
     multiplier = 1
-    if (unit == "KB" || unit == "K" || unit == "kB" || unit == "k") multiplier = 1000
+    if (unit == "" || unit == "B") multiplier = 1
+    else if (unit == "KB" || unit == "K") multiplier = 1000
     else if (unit == "MB" || unit == "M") multiplier = 1000000
     else if (unit == "GB" || unit == "G") multiplier = 1000000000
     else if (unit == "TB" || unit == "T") multiplier = 1000000000000
+    else if (unit == "KIB") multiplier = 1024
+    else if (unit == "MIB") multiplier = 1048576
+    else if (unit == "GIB") multiplier = 1073741824
+    else if (unit == "TIB") multiplier = 1099511627776
+    else exit 1
     printf "%.0f", number * multiplier
   }'
 }
@@ -304,6 +317,54 @@ sc_sum_paths_bytes() {
 
 sc_trim_reclaim() {
   printf '%s' "${1:-unknown}" | sed 's/[[:space:]]*(.*)$//'
+}
+
+sc_docker_size_bytes() {
+  local raw bytes
+  raw="$(sc_trim_reclaim "${1:-unknown}")"
+  if bytes="$(sc_size_to_bytes "${raw}")"; then
+    printf '%s' "${bytes}"
+  else
+    printf '0'
+  fi
+}
+
+sc_docker_size_display() {
+  local raw bytes
+  raw="$(sc_trim_reclaim "${1:-unknown}")"
+  case "${raw}" in
+    ''|unknown)
+      printf 'unknown'
+      return 0
+      ;;
+  esac
+  if ! bytes="$(sc_size_to_bytes "${raw}")"; then
+    printf 'unknown'
+    return 0
+  fi
+  sc_human_bytes "${bytes}"
+}
+
+sc_docker_size_is_negative() {
+  local raw
+  raw="$(sc_trim_reclaim "${1:-unknown}")"
+  awk -v raw="${raw}" 'BEGIN {
+    gsub(/[[:space:]]/, "", raw)
+    exit !((raw + 0) < 0)
+  }'
+}
+
+sc_print_docker_evidence() {
+  local label="$1" total_raw="$2" reclaim_raw="$3"
+  local total_display reclaim_display
+  total_display="$(sc_docker_size_display "${total_raw}")"
+  reclaim_display="$(sc_docker_size_display "${reclaim_raw}")"
+  sc_info "  Evidence: ${label} total ${total_display}; reclaimable ${reclaim_display}."
+  if sc_docker_size_is_negative "${reclaim_raw}"; then
+    sc_info "            Docker returned an invalid negative reclaimable value; treated as zero."
+  elif [ "${reclaim_display}" = "unknown" ] && [ "${reclaim_raw}" != "unknown" ]; then
+    sc_info "            Docker returned an unrecognized reclaimable value; excluded from the estimate."
+  fi
 }
 
 sc_parse_tm_snapshot_output() {
@@ -626,10 +687,10 @@ sc_action_estimate() {
         printf 'user-defined'
       fi
       ;;
-    docker-build-cache) printf '%s' "${SC_DOCKER_BUILD_RECLAIM}" ;;
-    docker-unused-images) printf '%s' "${SC_DOCKER_IMAGES_RECLAIM}" ;;
-    docker-stopped-containers) printf '%s' "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
-    docker-unused-volumes) printf '%s' "${SC_DOCKER_VOLUMES_RECLAIM}" ;;
+    docker-build-cache) sc_docker_size_display "${SC_DOCKER_BUILD_RECLAIM}" ;;
+    docker-unused-images) sc_docker_size_display "${SC_DOCKER_IMAGES_RECLAIM}" ;;
+    docker-stopped-containers) sc_docker_size_display "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
+    docker-unused-volumes) sc_docker_size_display "${SC_DOCKER_VOLUMES_RECLAIM}" ;;
     dev-caches) sc_human_bytes "${SC_DEV_CACHE_BYTES}" ;;
     simulator-old-runtimes) sc_human_bytes "${SC_SIM_OLD_BYTES}" ;;
     simulator-unavailable-devices) sc_human_bytes "${SC_SIM_UNAVAILABLE_BYTES}" ;;
@@ -645,10 +706,10 @@ sc_action_estimate_bytes() {
   case "$1" in
     time-machine-snapshots) printf '0' ;;
     time-machine-thin) printf '0' ;;
-    docker-build-cache) sc_size_to_bytes "${SC_DOCKER_BUILD_RECLAIM}" ;;
-    docker-unused-images) sc_size_to_bytes "${SC_DOCKER_IMAGES_RECLAIM}" ;;
-    docker-stopped-containers) sc_size_to_bytes "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
-    docker-unused-volumes) sc_size_to_bytes "${SC_DOCKER_VOLUMES_RECLAIM}" ;;
+    docker-build-cache) sc_docker_size_bytes "${SC_DOCKER_BUILD_RECLAIM}" ;;
+    docker-unused-images) sc_docker_size_bytes "${SC_DOCKER_IMAGES_RECLAIM}" ;;
+    docker-stopped-containers) sc_docker_size_bytes "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
+    docker-unused-volumes) sc_docker_size_bytes "${SC_DOCKER_VOLUMES_RECLAIM}" ;;
     dev-caches) printf '%s' "${SC_DEV_CACHE_BYTES}" ;;
     simulator-old-runtimes) printf '%s' "${SC_SIM_OLD_BYTES}" ;;
     simulator-unavailable-devices) printf '%s' "${SC_SIM_UNAVAILABLE_BYTES}" ;;
@@ -747,19 +808,19 @@ sc_explain_action() {
       sc_info "  Effect: HIGH risk. Local restore points may disappear. Uses tmutil only; never rm or automatic sudo."
       ;;
     docker-build-cache)
-      sc_info "  Evidence: Docker build cache total ${SC_DOCKER_BUILD_TOTAL}; reclaimable ${SC_DOCKER_BUILD_RECLAIM}."
+      sc_print_docker_evidence "Docker build cache" "${SC_DOCKER_BUILD_TOTAL}" "${SC_DOCKER_BUILD_RECLAIM}"
       sc_info "  Effect: Builds may be slower once because layers must be rebuilt."
       ;;
     docker-unused-images)
-      sc_info "  Evidence: Images total ${SC_DOCKER_IMAGES_TOTAL}; reclaimable ${SC_DOCKER_IMAGES_RECLAIM}."
+      sc_print_docker_evidence "Images" "${SC_DOCKER_IMAGES_TOTAL}" "${SC_DOCKER_IMAGES_RECLAIM}"
       sc_info "  Effect: Removed images must be pulled or rebuilt if needed later."
       ;;
     docker-stopped-containers)
-      sc_info "  Evidence: Containers total ${SC_DOCKER_CONTAINERS_TOTAL}; reclaimable ${SC_DOCKER_CONTAINERS_RECLAIM}."
+      sc_print_docker_evidence "Containers" "${SC_DOCKER_CONTAINERS_TOTAL}" "${SC_DOCKER_CONTAINERS_RECLAIM}"
       sc_info "  Effect: Writable layers of stopped containers are lost; running containers are untouched."
       ;;
     docker-unused-volumes)
-      sc_info "  Evidence: Volumes total ${SC_DOCKER_VOLUMES_TOTAL}; reclaimable ${SC_DOCKER_VOLUMES_RECLAIM}."
+      sc_print_docker_evidence "Volumes" "${SC_DOCKER_VOLUMES_TOTAL}" "${SC_DOCKER_VOLUMES_RECLAIM}"
       sc_info "  Effect: Unreferenced databases/uploads can be permanently lost. Excluded from A and B."
       ;;
     dev-caches)
