@@ -142,4 +142,6 @@ The test suite checks shell syntax, package policy, cache allowlist guards, Time
 
 Issues and pull requests are welcome, especially for additional macOS storage categories, safety reviews, and Bash 3.2 compatibility improvements.
 
-The read-only Time Machine and AI cache inventory was inspired by [Issue #1](https://github.com/khiemnd777/storage-clearer/issues/1), contributed by [@hellosimplerick](https://github.com/hellosimplerick).
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for project acknowledgements.
+
+The read-only Time Machine and AI cache inventory was inspired by [Issue #1](https://github.com/khiemnd777/storage-clearer/issues/1), contributed by [Rick Segal (@hellosimplerick)](https://github.com/hellosimplerick).
