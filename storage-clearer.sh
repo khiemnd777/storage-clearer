@@ -64,7 +64,10 @@ SC_DEV_CACHE_TARGETS=(
   "${SC_USER_HOME}/.pub-cache"
   "${SC_USER_HOME}/Library/pnpm"
   "${SC_USER_HOME}/Library/Caches/pnpm"
+  "${SC_USER_HOME}/Library/Caches/pip"
+  "${SC_USER_HOME}/Library/Caches/node-gyp"
   "${SC_USER_HOME}/Library/Caches/ms-playwright"
+  "${SC_USER_HOME}/Library/Caches/ms-playwright-go"
   "${SC_USER_HOME}/Library/Caches/Homebrew"
   "${SC_USER_HOME}/Library/Caches/CocoaPods"
   "${SC_USER_HOME}/Library/Caches/Yarn"
@@ -92,7 +95,10 @@ SC_DIRECT_CACHE_TARGETS=(
   "${SC_USER_HOME}/.pub-cache"
   "${SC_USER_HOME}/Library/pnpm"
   "${SC_USER_HOME}/Library/Caches/pnpm"
+  "${SC_USER_HOME}/Library/Caches/pip"
+  "${SC_USER_HOME}/Library/Caches/node-gyp"
   "${SC_USER_HOME}/Library/Caches/ms-playwright"
+  "${SC_USER_HOME}/Library/Caches/ms-playwright-go"
   "${SC_USER_HOME}/Library/Caches/Homebrew"
   "${SC_USER_HOME}/Library/Caches/CocoaPods"
   "${SC_USER_HOME}/Library/Caches/Yarn"
@@ -726,7 +732,7 @@ sc_explain_action() {
       sc_info "  Effect: Unreferenced databases/uploads can be permanently lost. Excluded from A and B."
       ;;
     dev-caches)
-      sc_info "  Evidence: Allowlisted npm/Bun/Gradle/Go/Pub/pnpm/Playwright caches total $(sc_human_bytes "${SC_DEV_CACHE_BYTES}")."
+      sc_info "  Evidence: Allowlisted npm/Bun/Gradle/Go/Pub/pnpm/pip/node-gyp/Playwright caches total $(sc_human_bytes "${SC_DEV_CACHE_BYTES}")."
       sc_info "  Effect: Dependencies and browser binaries are re-downloaded; source files are untouched."
       ;;
     simulator-old-runtimes)

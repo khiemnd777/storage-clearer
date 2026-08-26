@@ -56,7 +56,7 @@ Running the script without arguments is equivalent to `audit`.
 - Docker stopped containers.
 - Docker images no longer referenced by a container.
 - Docker build cache.
-- Rebuildable npm, Bun, Gradle, Go, Pub, pnpm, and Playwright caches.
+- Rebuildable npm, Bun, Gradle, Go, Pub, pnpm, pip, node-gyp, and Playwright/Playwright Go caches.
 - Simulator devices whose runtimes are no longer available.
 
 ### Package B — reviewed machine cleanup
