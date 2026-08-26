@@ -7,12 +7,13 @@
 set -u
 set -o pipefail
 
-SC_VERSION="1.1.1"
+SC_VERSION="1.2.0"
 SC_USER_HOME="${HOME:?HOME is not set}"
 SC_DATA_MOUNT="/"
 SC_TEMP_DIR=""
 SC_RUNTIME_FILE=""
 SC_OLD_RUNTIME_FILE=""
+SC_TM_SNAPSHOT_FILE=""
 SC_EXEC_LOG=""
 SC_SPINNER_PID=""
 SC_SPINNER_MESSAGE=""
@@ -47,6 +48,7 @@ SC_SIM_UNAVAILABLE_BYTES=0
 SC_WORKS_BYTES=0
 SC_WORKS_GENERATED_BYTES=0
 SC_CODEX_SESSION_BYTES=0
+SC_AI_CACHE_BYTES=0
 SC_BROWSER_REVIEW_BYTES=0
 
 SC_GO_MODULE_CACHE="${SC_USER_HOME}/go/pkg/mod"
@@ -66,6 +68,18 @@ SC_DEV_CACHE_TARGETS=(
   "${SC_USER_HOME}/Library/Caches/Homebrew"
   "${SC_USER_HOME}/Library/Caches/CocoaPods"
   "${SC_USER_HOME}/Library/Caches/Yarn"
+)
+
+# These application-specific locations are measured for review only. They are
+# deliberately absent from both cleanup packages and the executable allowlist.
+SC_AI_CACHE_TARGETS=(
+  "${SC_USER_HOME}/Library/Application Support/Claude/vm_bundles"
+  "${SC_USER_HOME}/Library/Application Support/Claude/Cache"
+  "${SC_USER_HOME}/Library/Application Support/Claude/Code Cache"
+  "${SC_USER_HOME}/Library/Application Support/Claude/GPUCache"
+  "${SC_USER_HOME}/Library/Application Support/Claude/DawnWebGPUCache"
+  "${SC_USER_HOME}/Library/Application Support/Claude/DawnGraphiteCache"
+  "${SC_USER_HOME}/Library/Caches/Codex"
 )
 
 # Only these paths may be passed to rm. Go caches are intentionally read-only
@@ -95,6 +109,7 @@ SC_EXECUTABLE_ACTIONS=(
 )
 
 SC_MATRIX_ACTIONS=(
+  "time-machine-snapshots"
   "docker-build-cache"
   "docker-unused-images"
   "docker-stopped-containers"
@@ -104,6 +119,7 @@ SC_MATRIX_ACTIONS=(
   "simulator-unavailable-devices"
   "browser-site-data"
   "works-generated"
+  "ai-assistant-caches"
   "codex-sessions"
 )
 
@@ -217,6 +233,7 @@ sc_ensure_temp() {
     SC_TEMP_DIR="$(mktemp -d /tmp/storage-clearer.XXXXXX)" || sc_die "Cannot create temporary directory"
     SC_RUNTIME_FILE="${SC_TEMP_DIR}/runtimes.tsv"
     SC_OLD_RUNTIME_FILE="${SC_TEMP_DIR}/old-runtimes.tsv"
+    SC_TM_SNAPSHOT_FILE="${SC_TEMP_DIR}/time-machine-snapshots.txt"
   fi
 }
 
@@ -256,7 +273,10 @@ sc_du_bytes() {
     printf '0\n'
     return 0
   fi
-  /usr/bin/du -sk "${target}" 2>/dev/null | awk 'NR == 1 {printf "%.0f\n", $1 * 1024}'
+  /usr/bin/du -sk "${target}" 2>/dev/null | awk '
+    NR == 1 {printf "%.0f\n", $1 * 1024; found = 1}
+    END {if (!found) print "0"}
+  '
 }
 
 sc_sum_paths_bytes() {
@@ -274,8 +294,29 @@ sc_trim_reclaim() {
   printf '%s' "${1:-unknown}" | sed 's/[[:space:]]*(.*)$//'
 }
 
+sc_parse_tm_snapshot_output() {
+  awk '/^com\.apple\.TimeMachine\.[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]\.local$/ {print}'
+}
+
+sc_tm_snapshot_timestamp() {
+  local name="${1:-}"
+  local stamp
+  stamp="${name#com.apple.TimeMachine.}"
+  stamp="${stamp%.local}"
+  case "${stamp}" in
+    ????-??-??-??????)
+      printf '%s %s:%s:%s' \
+        "${stamp:0:10}" "${stamp:11:2}" "${stamp:13:2}" "${stamp:15:2}"
+      ;;
+    *)
+      printf 'date unavailable'
+      ;;
+  esac
+}
+
 sc_collect_disk() {
   local disk_line
+  local tm_snapshot_output
   local snapshot_output
 
   if [ -d "/System/Volumes/Data" ]; then
@@ -290,8 +331,13 @@ sc_collect_disk() {
     SC_DATA_DEVICE="$(printf '%s' "${disk_line}" | awk -F '|' '{print $4}' | sed 's#^/dev/##')"
   fi
 
-  if sc_have tmutil; then
-    SC_TM_SNAPSHOT_COUNT="$(tmutil listlocalsnapshots / 2>/dev/null | awk '/^com\.apple\./ {count++} END {print count + 0}')"
+  sc_ensure_temp
+  : > "${SC_TM_SNAPSHOT_FILE}"
+  SC_TM_SNAPSHOT_COUNT="unknown"
+  SC_APFS_DATA_SNAPSHOT_COUNT="unknown"
+  if sc_have tmutil && tm_snapshot_output="$(tmutil listlocalsnapshots / 2>/dev/null)"; then
+    printf '%s\n' "${tm_snapshot_output}" | sc_parse_tm_snapshot_output > "${SC_TM_SNAPSHOT_FILE}"
+    SC_TM_SNAPSHOT_COUNT="$(awk 'NF {count++} END {print count + 0}' "${SC_TM_SNAPSHOT_FILE}")"
   fi
 
   if sc_have diskutil && [ "${SC_DATA_DEVICE}" != "unknown" ]; then
@@ -496,6 +542,7 @@ sc_collect_secondary() {
   SC_DEV_CACHE_BYTES="$(sc_sum_paths_bytes "${SC_DEV_CACHE_TARGETS[@]}")"
   SC_WORKS_BYTES="$(sc_du_bytes "${SC_USER_HOME}/Works")"
   SC_CODEX_SESSION_BYTES="$(sc_du_bytes "${SC_USER_HOME}/.codex/sessions")"
+  SC_AI_CACHE_BYTES="$(sc_sum_paths_bytes "${SC_AI_CACHE_TARGETS[@]}")"
 
   generated_kib=0
   if [ -d "${SC_USER_HOME}/Works" ]; then
@@ -515,11 +562,12 @@ sc_collect_facts() {
   sc_run_phase "Disk usage and APFS snapshots" sc_collect_disk
   sc_run_phase "Docker storage and reclaimable objects" sc_collect_docker
   sc_run_phase "iOS Simulator runtimes, caches, and devices" sc_collect_simulator
-  sc_run_phase "Developer caches, browser data, and projects" sc_collect_secondary
+  sc_run_phase "Developer, browser, project, and AI cache inventory" sc_collect_secondary
 }
 
 sc_action_label() {
   case "$1" in
+    time-machine-snapshots) printf 'Time Machine/APFS snapshots' ;;
     docker-stopped-containers) printf 'Docker stopped containers' ;;
     docker-unused-images) printf 'Docker unused images' ;;
     docker-build-cache) printf 'Docker build cache' ;;
@@ -529,6 +577,7 @@ sc_action_label() {
     simulator-unavailable-devices) printf 'Unavailable simulators' ;;
     browser-site-data) printf 'Browser models/site data' ;;
     works-generated) printf 'Generated project folders' ;;
+    ai-assistant-caches) printf 'AI assistant caches' ;;
     codex-sessions) printf 'Codex session history' ;;
     *) printf '%s' "$1" ;;
   esac
@@ -538,7 +587,8 @@ sc_action_risk() {
   case "$1" in
     docker-build-cache|docker-unused-images|docker-stopped-containers|dev-caches|simulator-unavailable-devices) printf 'LOW' ;;
     simulator-old-runtimes|browser-site-data|works-generated) printf 'MEDIUM' ;;
-    docker-unused-volumes|codex-sessions) printf 'HIGH' ;;
+    docker-unused-volumes|time-machine-snapshots|codex-sessions) printf 'HIGH' ;;
+    ai-assistant-caches) printf 'MEDIUM' ;;
     *) printf 'UNKNOWN' ;;
   esac
 }
@@ -548,13 +598,14 @@ sc_action_option() {
     docker-build-cache|docker-unused-images|docker-stopped-containers|dev-caches|simulator-unavailable-devices) printf 'A/B/Custom' ;;
     simulator-old-runtimes) printf 'B/Custom' ;;
     docker-unused-volumes) printf 'Custom only' ;;
-    browser-site-data|works-generated|codex-sessions) printf 'Manual review' ;;
+    browser-site-data|works-generated|time-machine-snapshots|ai-assistant-caches|codex-sessions) printf 'Manual review' ;;
     *) printf '-' ;;
   esac
 }
 
 sc_action_estimate() {
   case "$1" in
+    time-machine-snapshots) printf 'unknown' ;;
     docker-build-cache) printf '%s' "${SC_DOCKER_BUILD_RECLAIM}" ;;
     docker-unused-images) printf '%s' "${SC_DOCKER_IMAGES_RECLAIM}" ;;
     docker-stopped-containers) printf '%s' "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
@@ -564,6 +615,7 @@ sc_action_estimate() {
     simulator-unavailable-devices) sc_human_bytes "${SC_SIM_UNAVAILABLE_BYTES}" ;;
     browser-site-data) sc_human_bytes "${SC_BROWSER_REVIEW_BYTES}" ;;
     works-generated) sc_human_bytes "${SC_WORKS_GENERATED_BYTES}" ;;
+    ai-assistant-caches) sc_human_bytes "${SC_AI_CACHE_BYTES}" ;;
     codex-sessions) sc_human_bytes "${SC_CODEX_SESSION_BYTES}" ;;
     *) printf 'unknown' ;;
   esac
@@ -571,6 +623,7 @@ sc_action_estimate() {
 
 sc_action_estimate_bytes() {
   case "$1" in
+    time-machine-snapshots) printf '0' ;;
     docker-build-cache) sc_size_to_bytes "${SC_DOCKER_BUILD_RECLAIM}" ;;
     docker-unused-images) sc_size_to_bytes "${SC_DOCKER_IMAGES_RECLAIM}" ;;
     docker-stopped-containers) sc_size_to_bytes "${SC_DOCKER_CONTAINERS_RECLAIM}" ;;
@@ -580,6 +633,7 @@ sc_action_estimate_bytes() {
     simulator-unavailable-devices) printf '%s' "${SC_SIM_UNAVAILABLE_BYTES}" ;;
     browser-site-data) printf '%s' "${SC_BROWSER_REVIEW_BYTES}" ;;
     works-generated) printf '%s' "${SC_WORKS_GENERATED_BYTES}" ;;
+    ai-assistant-caches) printf '%s' "${SC_AI_CACHE_BYTES}" ;;
     codex-sessions) printf '%s' "${SC_CODEX_SESSION_BYTES}" ;;
     *) printf '0' ;;
   esac
@@ -587,6 +641,7 @@ sc_action_estimate_bytes() {
 
 sc_action_reason_short() {
   case "$1" in
+    time-machine-snapshots) printf 'Point-in-time copies can retain blocks after files are deleted' ;;
     docker-build-cache) printf 'Rebuildable layers; no active cache ownership' ;;
     docker-unused-images) printf 'Not referenced by any container' ;;
     docker-stopped-containers) printf 'Stopped writable layers only' ;;
@@ -596,6 +651,7 @@ sc_action_reason_short() {
     simulator-unavailable-devices) printf 'Runtime is already missing' ;;
     browser-site-data) printf 'Mostly downloadable models/offline web data' ;;
     works-generated) printf 'node_modules/build outputs are reproducible' ;;
+    ai-assistant-caches) printf 'App caches and VM bundles may be rebuildable but need app context' ;;
     codex-sessions) printf 'Large history, but deletion loses task records' ;;
     *) printf '-' ;;
   esac
@@ -635,11 +691,24 @@ sc_print_reason_matrix() {
 
 sc_explain_action() {
   local action="$1"
+  local target
   sc_info ""
   sc_info "[$(sc_action_risk "${action}")] ${action} — $(sc_action_label "${action}")"
   sc_info "  Estimate: $(sc_action_estimate "${action}")"
   sc_info "  Options:  $(sc_action_option "${action}")"
   case "${action}" in
+    time-machine-snapshots)
+      sc_info "  Evidence: Time Machine snapshots: ${SC_TM_SNAPSHOT_COUNT}; Data-volume APFS snapshots: ${SC_APFS_DATA_SNAPSHOT_COUNT}."
+      if [ -n "${SC_TM_SNAPSHOT_FILE}" ] && [ -s "${SC_TM_SNAPSHOT_FILE}" ]; then
+        while IFS= read -r snapshot_name; do
+          [ -n "${snapshot_name}" ] || continue
+          sc_info "            $(sc_tm_snapshot_timestamp "${snapshot_name}") — ${snapshot_name}"
+        done < "${SC_TM_SNAPSHOT_FILE}"
+      elif [ "${SC_TM_SNAPSHOT_COUNT}" = "unknown" ]; then
+        sc_info "            Snapshot names unavailable; tmutil may be missing or the terminal may need Full Disk Access."
+      fi
+      sc_info "  Effect: Report-only. macOS manages local snapshots; no snapshot cleanup action is registered."
+      ;;
     docker-build-cache)
       sc_info "  Evidence: Docker build cache total ${SC_DOCKER_BUILD_TOTAL}; reclaimable ${SC_DOCKER_BUILD_RECLAIM}."
       sc_info "  Effect: Builds may be slower once because layers must be rebuilt."
@@ -680,6 +749,15 @@ sc_explain_action() {
     works-generated)
       sc_info "  Evidence: Works totals $(sc_human_bytes "${SC_WORKS_BYTES}"); generated folders total $(sc_human_bytes "${SC_WORKS_GENERATED_BYTES}")."
       sc_info "  Effect: Builds/dependencies must be regenerated. Report-only because project context matters."
+      ;;
+    ai-assistant-caches)
+      sc_info "  Evidence: Selected Claude Desktop VM/cache paths and the Codex application cache total $(sc_human_bytes "${SC_AI_CACHE_BYTES}")."
+      for target in "${SC_AI_CACHE_TARGETS[@]}"; do
+        if [ -e "${target}" ]; then
+          sc_info "            $(sc_human_bytes "$(sc_du_bytes "${target}")") — ${target}"
+        fi
+      done
+      sc_info "  Effect: Report-only. Cached app state may be downloadable, but this tool does not assume it is disposable."
       ;;
     codex-sessions)
       sc_info "  Evidence: Codex session history totals $(sc_human_bytes "${SC_CODEX_SESSION_BYTES}")."

@@ -37,6 +37,14 @@ package_b_count="$(printf '%s\n' "${package_b}" | awk 'NF {count++} END {print c
 [ "${package_b_count}" -eq 6 ] || fail "Package B action count changed unexpectedly"
 pass "Package B action count"
 
+if sc_contains_action "${package_b}" time-machine-snapshots; then
+  fail "Package B must exclude Time Machine snapshots"
+fi
+if sc_contains_action "${package_b}" ai-assistant-caches; then
+  fail "Package B must exclude AI assistant caches"
+fi
+pass "read-only categories excluded from Package B"
+
 sc_is_allowed_cache_target "${SC_USER_HOME}/.npm/_cacache" || fail "known cache is allowed"
 if sc_is_allowed_cache_target "${SC_GO_MODULE_CACHE}"; then
   fail "read-only Go module cache must use go clean, never direct rm"
@@ -61,7 +69,32 @@ done
 if sc_is_executable_action codex-sessions; then
   fail "Codex sessions must remain report-only"
 fi
+if sc_is_executable_action time-machine-snapshots; then
+  fail "Time Machine snapshots must remain report-only"
+fi
+if sc_is_executable_action ai-assistant-caches; then
+  fail "AI assistant caches must remain report-only"
+fi
 pass "executable action registry"
+
+tm_fixture='Snapshots for volume group containing disk /:
+com.apple.TimeMachine.2026-08-22-133354.local
+not-a-snapshot
+com.apple.os.update-1234567890
+com.apple.TimeMachine.malformed.local
+com.apple.TimeMachine.2026-08-23-133836.local'
+tm_parsed="$(printf '%s\n' "${tm_fixture}" | sc_parse_tm_snapshot_output)"
+tm_count="$(printf '%s\n' "${tm_parsed}" | awk 'NF {count++} END {print count + 0}')"
+[ "${tm_count}" -eq 2 ] || fail "Time Machine parser keeps only Time Machine snapshot names"
+printf '%s\n' "${tm_parsed}" | grep -q '^com\.apple\.TimeMachine\.2026-08-22-133354\.local$' || fail "first Time Machine snapshot parsed"
+[ "$(sc_tm_snapshot_timestamp 'com.apple.TimeMachine.2026-08-22-133354.local')" = "2026-08-22 13:33:54" ] || fail "snapshot timestamp formatting"
+[ "$(printf 'Snapshots for disk /:\n' | sc_parse_tm_snapshot_output | awk 'NF {count++} END {print count + 0}')" -eq 0 ] || fail "empty snapshot list"
+pass "Time Machine snapshot parser"
+
+[ "$(sc_action_risk time-machine-snapshots)" = "HIGH" ] || fail "snapshot risk is HIGH"
+[ "$(sc_action_option time-machine-snapshots)" = "Manual review" ] || fail "snapshot action is manual review"
+[ "$(sc_action_option ai-assistant-caches)" = "Manual review" ] || fail "AI caches are manual review"
+pass "read-only reason matrix policy"
 
 help_output="$(SC_SKIP_MAIN=0 /bin/bash "${SCRIPT_PATH}" help)" || fail "help command"
 printf '%s' "${help_output}" | grep -q 'audit' || fail "help mentions audit"
