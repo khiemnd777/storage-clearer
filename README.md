@@ -6,7 +6,7 @@ The default command is a read-only audit. Cleanup is only available through the 
 
 ## Why this exists
 
-macOS can group Docker data, Xcode Simulator runtimes, developer caches, and other files under the broad **System Data** category. Generic cleanup commands often hide what they remove and may mix rebuildable files with valuable data.
+macOS can group Docker data, Xcode Simulator runtimes, developer caches, Time Machine snapshots, and other files under the broad **System Data** category. Generic cleanup commands often hide what they remove and may mix rebuildable files with valuable data.
 
 This tool separates the workflow into four explicit stages:
 
@@ -82,6 +82,8 @@ The predefined packages never delete:
 
 Browser data, `~/Works`, and Codex sessions may appear in the reason matrix for review, but they do not have automatic cleanup actions.
 
+Time Machine/APFS snapshot inventory and selected Claude/Codex cache locations also appear in the matrix as read-only observations. Snapshot names and embedded timestamps are shown when `tmutil` permits access. Their reclaimable size is intentionally reported as `unknown` because macOS manages snapshot storage dynamically.
+
 ## Safety model
 
 - Cleanup refuses to run under `sudo` or as the `root` user.
@@ -92,6 +94,7 @@ Browser data, `~/Works`, and Codex sessions may appear in the reason matrix for 
 - Go caches are cleaned with `go clean -modcache -cache -testcache`; permissions are not changed to force removal.
 - Simulator runtime UUIDs and Docker volume targets are revalidated immediately before execution.
 - Docker cleanup uses official prune commands and never directly deletes `Docker.raw`.
+- Time Machine/APFS snapshots and AI assistant caches have no executable action; they remain manual-review findings.
 - Every cleanup command is recorded under `~/Library/Logs/storage-clearer/`.
 - Free space is measured before and after execution.
 
@@ -122,8 +125,10 @@ After Docker prune operations, space is released inside the Docker VM immediatel
 ./tests/test_storage_clearer.sh
 ```
 
-The test suite checks shell syntax, package policy, cache allowlist guards, runtime identifiers, the executable action registry, help output, and spinner fallback behavior. It does not execute cleanup actions.
+The test suite checks shell syntax, package policy, cache allowlist guards, Time Machine snapshot parsing, read-only matrix policy, runtime identifiers, the executable action registry, help output, and spinner fallback behavior. It does not execute cleanup actions.
 
 ## Contributing
 
 Issues and pull requests are welcome, especially for additional macOS storage categories, safety reviews, and Bash 3.2 compatibility improvements.
+
+The read-only Time Machine and AI cache inventory was inspired by [Issue #1](https://github.com/khiemnd777/storage-clearer/issues/1), contributed by [@hellosimplerick](https://github.com/hellosimplerick).
