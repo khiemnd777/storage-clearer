@@ -45,9 +45,32 @@ if sc_contains_action "${package_b}" ai-assistant-caches; then
 fi
 pass "read-only categories excluded from Package B"
 
-sc_is_allowed_cache_target "${SC_USER_HOME}/.npm/_cacache" || fail "known cache is allowed"
+for cache_target in \
+  "${SC_USER_HOME}/.npm/_cacache" \
+  "${SC_USER_HOME}/Library/Caches/pip" \
+  "${SC_USER_HOME}/Library/Caches/node-gyp" \
+  "${SC_USER_HOME}/Library/Caches/ms-playwright-go"; do
+  sc_is_allowed_cache_target "${cache_target}" || fail "known cache is allowed: ${cache_target}"
+  cache_is_audited=0
+  for audited_target in "${SC_DEV_CACHE_TARGETS[@]}"; do
+    if [ "${audited_target}" = "${cache_target}" ]; then
+      cache_is_audited=1
+      break
+    fi
+  done
+  [ "${cache_is_audited}" -eq 1 ] || fail "cleanup cache must also be included in audit estimates: ${cache_target}"
+done
 if sc_is_allowed_cache_target "${SC_GO_MODULE_CACHE}"; then
   fail "read-only Go module cache must use go clean, never direct rm"
+fi
+if sc_is_allowed_cache_target "${SC_USER_HOME}/Library/Caches/Codex"; then
+  fail "Codex cache must remain report-only"
+fi
+if sc_is_allowed_cache_target "${SC_USER_HOME}/Library/Caches/com.apple.python"; then
+  fail "unclassified application cache must not enter the allowlist"
+fi
+if sc_is_allowed_cache_target "${SC_USER_HOME}/Library/Caches/4kdownload.com"; then
+  fail "download application cache must not enter the allowlist"
 fi
 if sc_is_allowed_cache_target "${SC_USER_HOME}"; then
   fail "user home must never be an allowed cache target"
