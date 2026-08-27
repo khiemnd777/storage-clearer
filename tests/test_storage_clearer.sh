@@ -24,6 +24,18 @@ export SC_SKIP_MAIN
 # shellcheck source=../storage-clearer.sh
 source "${SCRIPT_PATH}"
 
+SC_DATA_DEVICE='disk"ui-test'
+SC_DISK_TOTAL_BYTES=100
+SC_DISK_USED_BYTES=60
+SC_DISK_FREE_BYTES=40
+app_json="$(sc_print_app_json)"
+printf '%s\n' "${app_json}" | plutil -convert xml1 -o - - >/dev/null || fail "app JSON contract is valid"
+printf '%s\n' "${app_json}" | grep -q '"schemaVersion":1' || fail "app JSON schema version"
+printf '%s\n' "${app_json}" | grep -q '"device":"disk\\"ui-test"' || fail "app JSON escaping"
+printf '%s\n' "${app_json}" | grep -q '"A":\["docker-stopped-containers"' || fail "app JSON Package A"
+printf '%s\n' "${app_json}" | grep -q '"id":"codex-sessions".*"executable":false' || fail "app JSON preserves report-only policy"
+pass "native app JSON contract"
+
 package_b="$(sc_package_actions B)" || fail "Package B exists"
 sc_contains_action "${package_b}" simulator-old-runtimes || fail "Package B includes old runtimes"
 sc_contains_action "${package_b}" dev-caches || fail "Package B includes developer caches"
@@ -284,8 +296,50 @@ pass "mocked Time Machine execution"
 
 help_output="$(SC_SKIP_MAIN=0 /bin/bash "${SCRIPT_PATH}" help)" || fail "help command"
 printf '%s' "${help_output}" | grep -q 'audit' || fail "help mentions audit"
+printf '%s' "${help_output}" | grep -Fq 'run [A|B]' || fail "help documents protected app handoff"
+printf '%s' "${help_output}" | grep -Fq 'app-run [A|B]' || fail "help documents native app cleanup session"
 printf '%s' "${help_output}" | grep -q 'exact typed approval phrase' || fail "help documents approval gate"
 pass "help output"
+
+ui_approved_output="$({
+  SC_APP_PROTOCOL=1
+  SC_APP_SESSION=1
+  SC_USER_HOME="${SC_TEMP_DIR}"
+  SC_DISK_FREE_BYTES=1024
+  sc_collect_facts() { SC_DISK_FREE_BYTES=1024; }
+  sc_print_audit_summary() { :; }
+  sc_print_reason_matrix() { :; }
+  sc_validate_selected_policy() { :; }
+  sc_show_plan() { printf 'MOCK_PLAN:%s\n' "$1"; }
+  sc_target_signature() { printf 'stable-test-signature'; }
+  sc_collect_simulator() { :; }
+  sc_run_phase() { shift; "$@"; }
+  sc_execute_selected() { printf 'MOCK_EXECUTE:%s\n' "$1"; }
+  sc_collect_disk() { SC_DISK_FREE_BYTES=2048; }
+  printf '%s\n' 'DELETE PACKAGE-A' | sc_run_interactive A 2>&1
+})" || fail "approved native app session"
+printf '%s\n' "${ui_approved_output}" | grep -Fq '@@STORAGE_CLEARER:approval:DELETE PACKAGE-A@@' || fail "native app receives exact approval phrase"
+printf '%s\n' "${ui_approved_output}" | grep -Fq '@@STORAGE_CLEARER:execution-started:PACKAGE-A@@' || fail "native app receives execution boundary"
+printf '%s\n' "${ui_approved_output}" | grep -Fq 'MOCK_EXECUTE:' || fail "matching native approval reaches mocked execution"
+
+ui_rejected_output="$({
+  SC_APP_PROTOCOL=1
+  SC_APP_SESSION=1
+  SC_USER_HOME="${SC_TEMP_DIR}"
+  sc_collect_facts() { SC_DISK_FREE_BYTES=1024; }
+  sc_print_audit_summary() { :; }
+  sc_print_reason_matrix() { :; }
+  sc_validate_selected_policy() { :; }
+  sc_show_plan() { :; }
+  sc_target_signature() { printf 'stable-test-signature'; }
+  sc_execute_selected() { printf 'MOCK_EXECUTE:%s\n' "$1"; }
+  printf '%s\n' 'WRONG PHRASE' | sc_run_interactive A 2>&1
+})" || fail "rejected native app session"
+printf '%s\n' "${ui_rejected_output}" | grep -Fq '@@STORAGE_CLEARER:cancelled:approval-mismatch@@' || fail "native app receives approval mismatch"
+if printf '%s\n' "${ui_rejected_output}" | grep -Fq 'MOCK_EXECUTE:'; then
+  fail "mismatched native approval must not execute"
+fi
+pass "native app protected cleanup protocol"
 
 spinner_output="$(SC_NO_ANIMATION=1 sc_spinner_start 'test phase' 2>&1; SC_NO_ANIMATION=1 sc_spinner_stop done 2>&1)"
 printf '%s' "${spinner_output}" | grep -q '\[done\] test phase' || fail "static spinner fallback"

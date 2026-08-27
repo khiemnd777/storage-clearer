@@ -240,6 +240,11 @@ sc_die() {
   exit 1
 }
 
+sc_app_event() {
+  [ "${SC_APP_PROTOCOL:-0}" = "1" ] || return 0
+  printf '@@STORAGE_CLEARER:%s:%s@@\n' "$1" "${2:-}"
+}
+
 sc_ensure_temp() {
   if [ -z "${SC_TEMP_DIR}" ]; then
     SC_TEMP_DIR="$(mktemp -d /tmp/storage-clearer.XXXXXX)" || sc_die "Cannot create temporary directory"
@@ -638,6 +643,15 @@ sc_collect_facts() {
   sc_run_phase "Developer, browser, project, and AI cache inventory" sc_collect_secondary
 }
 
+# The native macOS app consumes a small, stable JSON contract. This collector
+# intentionally stays silent so progress output can never corrupt the payload.
+sc_collect_facts_quiet() {
+  sc_collect_disk
+  sc_collect_docker
+  sc_collect_simulator
+  sc_collect_secondary
+}
+
 sc_action_label() {
   case "$1" in
     time-machine-snapshots) printf 'Time Machine/APFS snapshots' ;;
@@ -738,6 +752,96 @@ sc_action_reason_short() {
     codex-sessions) printf 'Large history, but deletion loses task records' ;;
     *) printf '-' ;;
   esac
+}
+
+sc_json_escape() {
+  LC_ALL=C awk 'BEGIN { ORS = "" }
+    {
+      if (NR > 1) printf "\\n"
+      for (i = 1; i <= length($0); i++) {
+        char = substr($0, i, 1)
+        if (char == "\\") printf "\\\\"
+        else if (char == "\"") printf "\\\""
+        else if (char == "\t") printf "\\t"
+        else if (char == "\r") printf "\\r"
+        else printf "%s", char
+      }
+    }'
+}
+
+sc_json_string() {
+  printf '"'
+  printf '%s' "${1:-}" | sc_json_escape
+  printf '"'
+}
+
+sc_print_json_action_array() {
+  local selected="$1"
+  local action first=1
+  printf '['
+  while IFS= read -r action; do
+    [ -n "${action}" ] || continue
+    if [ "${first}" -eq 0 ]; then
+      printf ','
+    fi
+    sc_json_string "${action}"
+    first=0
+  done <<EOF
+${selected}
+EOF
+  printf ']'
+}
+
+sc_print_app_json() {
+  local action first=1 executable package_a package_b
+  package_a="$(sc_package_actions A)"
+  package_b="$(sc_package_actions B)"
+
+  printf '{'
+  printf '"schemaVersion":1,'
+  printf '"engineVersion":'; sc_json_string "${SC_VERSION}"; printf ','
+  printf '"disk":{'
+  printf '"device":'; sc_json_string "${SC_DATA_DEVICE}"; printf ','
+  printf '"totalBytes":%s,' "${SC_DISK_TOTAL_BYTES}"
+  printf '"usedBytes":%s,' "${SC_DISK_USED_BYTES}"
+  printf '"freeBytes":%s' "${SC_DISK_FREE_BYTES}"
+  printf '},'
+  printf '"environment":{'
+  printf '"dockerReady":'; [ "${SC_DOCKER_READY}" -eq 1 ] && printf 'true' || printf 'false'; printf ','
+  printf '"dockerRawBytes":%s,' "${SC_DOCKER_RAW_BYTES}"
+  printf '"worksBytes":%s,' "${SC_WORKS_BYTES}"
+  printf '"timeMachineSnapshotCount":'; sc_json_string "${SC_TM_SNAPSHOT_COUNT}"; printf ','
+  printf '"apfsSnapshotCount":'; sc_json_string "${SC_APFS_DATA_SNAPSHOT_COUNT}"; printf ','
+  printf '"latestIOSRuntime":'; sc_json_string "${SC_SIM_LATEST_VERSION}"
+  printf '},'
+  printf '"packages":{'
+  printf '"A":'; sc_print_json_action_array "${package_a}"; printf ','
+  printf '"B":'; sc_print_json_action_array "${package_b}"
+  printf '},'
+  printf '"actions":['
+  for action in "${SC_MATRIX_ACTIONS[@]}"; do
+    if [ "${first}" -eq 0 ]; then
+      printf ','
+    fi
+    if sc_is_executable_action "${action}"; then
+      executable=true
+    else
+      executable=false
+    fi
+    printf '{'
+    printf '"id":'; sc_json_string "${action}"; printf ','
+    printf '"label":'; sc_json_string "$(sc_action_label "${action}")"; printf ','
+    printf '"risk":'; sc_json_string "$(sc_action_risk "${action}")"; printf ','
+    printf '"option":'; sc_json_string "$(sc_action_option "${action}")"; printf ','
+    printf '"estimate":'; sc_json_string "$(sc_action_estimate "${action}")"; printf ','
+    printf '"estimateBytes":%s,' "$(sc_action_estimate_bytes "${action}")"
+    printf '"reason":'; sc_json_string "$(sc_action_reason_short "${action}")"; printf ','
+    printf '"executable":%s' "${executable}"
+    printf '}'
+    first=0
+  done
+  printf ']}'
+  printf '\n'
 }
 
 sc_print_audit_summary() {
@@ -1328,10 +1432,13 @@ sc_run_interactive() {
   local choice selected package_name approval_phrase confirmation
   local signature_before signature_after before_free after_free delta status=0
   local log_dir
+  local preset="${1:-}"
 
   [ "$(uname -s)" = "Darwin" ] || sc_die "This program supports macOS only."
   [ "$(id -u)" -ne 0 ] || sc_die "Do not run this program as root or with sudo."
-  [ -t 0 ] || sc_die "Interactive cleanup requires a terminal. Audit/plan commands remain non-destructive."
+  if [ ! -t 0 ] && [ "${SC_APP_SESSION:-0}" != "1" ]; then
+    sc_die "Interactive cleanup requires a terminal or the protected macOS app session. Audit/plan commands remain non-destructive."
+  fi
 
   sc_collect_facts
   sc_print_audit_summary
@@ -1343,8 +1450,20 @@ sc_run_interactive() {
   sc_info "  B) Package B: A + old iOS runtimes; newest iOS ${SC_SIM_LATEST_VERSION} is kept"
   sc_info "  C) Custom: individual actions; Docker volumes and Time Machine thinning are HIGH risk"
   sc_info "  Q) Quit without changes"
-  printf 'Choose an option: '
-  IFS= read -r choice
+  if [ -n "${preset}" ]; then
+    case "${preset}" in
+      A|a|B|b)
+        choice="${preset}"
+        sc_info "Package ${preset} was selected in the macOS app."
+        ;;
+      *)
+        sc_die "The protected app handoff supports Package A or B only."
+        ;;
+    esac
+  else
+    printf 'Choose an option: '
+    IFS= read -r choice
+  fi
 
   case "${choice}" in
     A|a)
@@ -1381,12 +1500,16 @@ sc_run_interactive() {
 
   sc_info ""
   sc_info "To approve this exact plan, type: ${approval_phrase}"
+  sc_app_event approval "${approval_phrase}"
   printf '> '
   IFS= read -r confirmation
   if [ "${confirmation}" != "${approval_phrase}" ]; then
+    sc_app_event cancelled approval-mismatch
     sc_info "Approval did not match; nothing changed."
     return 0
   fi
+
+  sc_app_event execution-started "${package_name}"
 
   sc_run_phase "Revalidating destructive Simulator targets" sc_collect_simulator
   if sc_contains_action "${selected}" time-machine-thin; then
@@ -1404,6 +1527,7 @@ sc_run_interactive() {
   before_free="${SC_DISK_FREE_BYTES}"
 
   sc_info "Execution log: ${SC_EXEC_LOG}"
+  sc_app_event log-path "${SC_EXEC_LOG}"
   sc_execute_selected "${selected}" || status=1
 
   sc_collect_disk
@@ -1431,12 +1555,15 @@ Usage:
   ./storage-clearer.sh explain [all|ACTION-ID]
   ./storage-clearer.sh reason [all|ACTION-ID]
   ./storage-clearer.sh plan [A|B]
-  ./storage-clearer.sh run
+  ./storage-clearer.sh run [A|B]
+  ./storage-clearer.sh app-run [A|B]
+  ./storage-clearer.sh app-data
   ./storage-clearer.sh help
 
 Safety model:
   - audit, explain, and plan are read-only.
   - run is interactive and requires an exact typed approval phrase.
+  - app-run uses the same approval gate over the native app's private process pipe.
   - the program refuses to run cleanup as root.
   - Package A/B never delete Docker volumes, browser site data, Works data,
     Codex sessions, Photos, Mail, or macOS snapshots.
@@ -1474,7 +1601,20 @@ sc_main() {
       sc_show_plan "${selected}"
       ;;
     run)
-      sc_run_interactive
+      sc_run_interactive "${2:-}"
+      ;;
+    app-run)
+      subject="${2:-}"
+      case "${subject}" in
+        A|a|B|b) ;;
+        *) sc_die "The protected macOS app session supports Package A or B only." ;;
+      esac
+      SC_APP_SESSION=1
+      sc_run_interactive "${subject}"
+      ;;
+    app-data)
+      sc_collect_facts_quiet
+      sc_print_app_json
       ;;
     help|-h|--help)
       sc_usage

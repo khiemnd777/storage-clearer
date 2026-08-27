@@ -1,6 +1,6 @@
 # macOS Storage Clearer
 
-`storage-clearer` is a Bash 3.2-compatible CLI for auditing macOS disk usage, explaining likely causes through a reason matrix, and building a reviewable cleanup plan before anything is deleted.
+`storage-clearer` is a Bash 3.2-compatible storage engine with a native SwiftUI macOS app. It audits disk usage, explains likely causes through a reason matrix, and builds a reviewable cleanup plan before anything is deleted.
 
 The default command is a read-only audit. Cleanup is only available through the interactive `run` command after the user selects a package and enters the exact approval phrase shown by the program.
 
@@ -30,6 +30,26 @@ chmod +x storage-clearer.sh
 
 Running the script without arguments is equivalent to `audit`.
 
+## Native macOS app
+
+The commercial desktop experience adds a storage dashboard, reviewed Package A/B plan builder, risk labels, explicit exclusions, and a dedicated safety center. Cleanup runs in a protected in-app session: the engine refreshes the audit, displays the exact plan, waits for its matching approval phrase, revalidates changing targets, streams progress into the app, and preserves the execution log.
+
+Run the app directly during development:
+
+```bash
+swift run StorageClearerApp
+```
+
+Build a distributable `.app` bundle:
+
+```bash
+chmod +x scripts/package_app.sh
+./scripts/package_app.sh
+open "dist/Storage Clearer.app"
+```
+
+The generated bundle includes the storage engine and product icon. It is unsigned; external distribution requires Developer ID signing and Apple notarization.
+
 ## Commands
 
 ```text
@@ -37,7 +57,8 @@ Running the script without arguments is equivalent to `audit`.
 ./storage-clearer.sh explain [all|ACTION-ID]
 ./storage-clearer.sh reason [all|ACTION-ID]
 ./storage-clearer.sh plan [A|B]
-./storage-clearer.sh run
+./storage-clearer.sh run [A|B]
+./storage-clearer.sh app-run [A|B]
 ./storage-clearer.sh help
 ./storage-clearer.sh version
 ```
@@ -47,7 +68,8 @@ Running the script without arguments is equivalent to `audit`.
 | `audit` | No | Collect facts and display the storage summary and reason matrix. |
 | `explain` / `reason` | No | Show evidence, impact, policy, and recommendation for one or all action IDs. |
 | `plan A` / `plan B` | No | Preview the actions included in a predefined cleanup package. |
-| `run` | Potentially | Select a package interactively, review the plan, approve it, revalidate targets, and execute. |
+| `run [A\|B]` | Potentially | Select a package in Terminal, review the plan, approve it, revalidate targets, and execute. |
+| `app-run [A\|B]` | Potentially | Private native-app process protocol with the same exact approval and revalidation gates. |
 
 ## Cleanup options
 
@@ -98,7 +120,7 @@ Apple explains that local snapshots provide restore points and are normally remo
 
 - Cleanup refuses to run under `sudo` or as the `root` user.
 - `audit`, `explain`, `reason`, and `plan` are read-only.
-- `run` requires an interactive terminal and an exact typed approval phrase.
+- `run` requires an interactive terminal and an exact typed approval phrase; `app-run` accepts that phrase only through the native app's private process pipe.
 - Cache deletion is limited to a fixed allowlist of paths inside the current user's home directory.
 - Cache targets that are symbolic links are rejected.
 - Go caches are cleaned with `go clean -modcache -cache -testcache`; permissions are not changed to force removal.
@@ -126,7 +148,7 @@ SC_NO_ANIMATION=1 ./storage-clearer.sh audit
 - macOS with the system Bash 3.2 or a compatible Bash version.
 - Docker Desktop is optional, but it must be running to audit or clean Docker objects.
 - Xcode and `xcrun simctl` are optional and only required for Simulator inspection and cleanup.
-- Full Disk Access for the terminal is recommended for a more complete audit and may be required by `tmutil` on some macOS versions.
+- Full Disk Access for the surface performing cleanup (Storage Clearer or Terminal) is recommended for a more complete audit and may be required by `tmutil` on some macOS versions.
 
 After Docker prune operations, space is released inside the Docker VM immediately. The free-space value reported by macOS may update later, after Docker Desktop performs TRIM or compaction on `Docker.raw`.
 
@@ -136,7 +158,7 @@ After Docker prune operations, space is released inside the Docker VM immediatel
 ./tests/test_storage_clearer.sh
 ```
 
-The test suite checks shell syntax, package policy, cache allowlist guards, Time Machine snapshot parsing, thinning parameter validation, dedicated approval, target signatures, fully mocked `tmutil` execution, runtime identifiers, the executable action registry, help output, and spinner fallback behavior. It never thins real snapshots.
+The test suite checks shell syntax, package policy, cache allowlist guards, Time Machine snapshot parsing, thinning parameter validation, dedicated approval, target signatures, the native app approval protocol, fully mocked execution, runtime identifiers, the executable action registry, help output, and spinner fallback behavior. It never runs a real cleanup.
 
 ## Contributing
 
