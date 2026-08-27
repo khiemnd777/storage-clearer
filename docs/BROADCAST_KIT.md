@@ -56,7 +56,7 @@ Title: **Why Docker and Xcode Make macOS System Data Grow — and What Is Actual
 6. A real screenshot and the 12-second accelerated scan.
 7. Source and preview link: `https://clear.knasoftware.com/?utm_source=devto&utm_medium=article&utm_campaign=preview_1`.
 
-The canonical owned version is live at <https://clear.knasoftware.com/guides/docker-xcode-system-data.html>. Use that page as the canonical URL when cross-posting to DEV or Hashnode.
+The canonical owned version is live at <https://clear.knasoftware.com/guides/docker-xcode-system-data>. Use that page as the canonical URL when cross-posting to DEV or Hashnode.
 
 The article must teach the storage model even if the reader never downloads the app.
 
