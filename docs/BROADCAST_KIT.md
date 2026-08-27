@@ -1,6 +1,6 @@
 # Storage Clearer broadcast kit
 
-Campaign URL tokens are defined in [BROADCAST_PLAN.md](BROADCAST_PLAN.md). Replace `[URL]` with the matching channel URL before publishing.
+Campaign URL tokens are defined in [BROADCAST_PLAN.md](BROADCAST_PLAN.md). The copy below now contains its final channel-specific URL.
 
 ## Core message
 
@@ -16,7 +16,7 @@ It starts with a read-only audit, separates rebuildable clutter from protected d
 
 The source is public, and the Apple silicon preview can be downloaded directly—no account or installer.
 
-[URL]
+https://clear.knasoftware.com/?utm_source=linkedin&utm_medium=social&utm_campaign=preview_1
 
 I would especially value feedback about missing storage categories, confusing risk labels, or audit results that do not match what you expected.
 
@@ -26,7 +26,7 @@ I built Storage Clearer for Macs carrying Docker, Xcode Simulator, and rebuildab
 
 Read-only audit. Exact approval. No background deletion. Local processing and logs.
 
-Open source Apple silicon preview: [URL]
+Open source Apple silicon preview: https://clear.knasoftware.com/?utm_source=x&utm_medium=social&utm_campaign=preview_1
 
 ## Reddit/community draft
 
@@ -38,7 +38,7 @@ I made Storage Clearer for developer Macs where Docker objects, Simulator runtim
 
 The scan is read-only. It separates low-risk rebuildable items from protected or manual-review categories, shows the exact plan, and requires a matching approval phrase before cleanup. Docker and Simulator targets are checked again immediately before execution, and commands are logged locally.
 
-The current release is an unsigned Apple silicon preview for macOS 13 or later, so the first launch uses Control-click → Open. Source and direct download: [URL]
+The current release is an unsigned Apple silicon preview for macOS 13 or later, so the first launch uses Control-click → Open. Source and direct download: https://clear.knasoftware.com/?utm_source=reddit&utm_medium=community&utm_campaign=preview_1
 
 I am looking for technical feedback, especially false positives, missing cache categories, and confusing explanations. I am the developer of the project.
 
@@ -54,7 +54,9 @@ Title: **Why Docker and Xcode Make macOS System Data Grow — and What Is Actual
 4. Rebuildable package/tool caches versus source projects and personal data.
 5. Why an audit, explicit plan, exact approval, revalidation, and command log are separate safety gates.
 6. A real screenshot and the 12-second accelerated scan.
-7. Source and preview link: `[URL]`.
+7. Source and preview link: `https://clear.knasoftware.com/?utm_source=devto&utm_medium=article&utm_campaign=preview_1`.
+
+The canonical owned version is live at <https://clear.knasoftware.com/guides/docker-xcode-system-data.html>. Use that page as the canonical URL when cross-posting to DEV or Hashnode.
 
 The article must teach the storage model even if the reader never downloads the app.
 

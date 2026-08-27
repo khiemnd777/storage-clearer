@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#071310">
+    <meta name="description" content="A practical guide to Docker, Xcode Simulator, and developer cache storage on macOS—and what is actually safe to rebuild.">
+    <meta name="robots" content="index,follow,max-image-preview:large">
+    <meta property="og:type" content="article">
+    <meta property="og:site_name" content="Storage Clearer">
+    <meta property="og:title" content="Why Docker and Xcode Make macOS System Data Grow">
+    <meta property="og:description" content="Understand build cache, images, volumes, Simulator devices, runtimes, and the boundary between rebuildable clutter and valuable data.">
+    <meta property="og:image" content="https://clear.knasoftware.com/assets/og.png">
+    <meta property="og:url" content="https://clear.knasoftware.com/guides/docker-xcode-system-data.html">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Why Docker and Xcode Make macOS System Data Grow">
+    <meta name="twitter:description" content="A practical map of what is rebuildable—and what a cleanup tool should never guess about.">
+    <meta name="twitter:image" content="https://clear.knasoftware.com/assets/og.png">
+    <title>Why Docker and Xcode Make macOS System Data Grow — Storage Clearer</title>
+    <link rel="canonical" href="https://clear.knasoftware.com/guides/docker-xcode-system-data.html">
+    <link rel="icon" href="../assets/app-icon.png">
+    <link rel="stylesheet" href="../styles.css?v=20260827-6">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "TechArticle",
+        "headline": "Why Docker and Xcode Make macOS System Data Grow — and What Is Actually Safe to Rebuild",
+        "description": "A practical guide to Docker, Xcode Simulator, and developer cache storage on macOS.",
+        "datePublished": "2026-08-27",
+        "dateModified": "2026-08-27",
+        "author": { "@type": "Organization", "name": "KNA Software", "url": "https://knasoftware.com/" },
+        "publisher": { "@type": "Organization", "name": "KNA Software", "logo": { "@type": "ImageObject", "url": "https://clear.knasoftware.com/assets/app-icon.png" } },
+        "mainEntityOfPage": "https://clear.knasoftware.com/guides/docker-xcode-system-data.html",
+        "image": "https://clear.knasoftware.com/assets/og.png"
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header">
+      <div class="nav shell">
+        <a class="brand" href="../" aria-label="Storage Clearer home"><img src="../assets/app-icon.png" alt="" width="38" height="38"><span><strong>Storage Clearer</strong><small>MAC WORKSPACE CARE</small></span></a>
+        <nav class="article-nav" aria-label="Article navigation"><a href="../#images">Images</a><a href="../#download">Download</a><a href="https://github.com/khiemnd777/storage-clearer" rel="noreferrer">Source</a></nav>
+      </div>
+    </header>
+
+    <main id="main" class="article-shell">
+      <article>
+        <header class="article-hero">
+          <p class="eyebrow">MACOS STORAGE FIELD GUIDE</p>
+          <h1>Why Docker and Xcode make System Data grow.</h1>
+          <p class="article-deck">The label is broad. The cleanup decision should not be. Here is a practical map of what developer tools keep on disk, what can usually be rebuilt, and what deserves an explicit boundary.</p>
+          <div class="article-meta"><span>8 minute read</span><span>Updated 27 August 2026</span><span>By KNA Software</span></div>
+        </header>
+
+        <figure class="article-figure"><img src="../assets/overview.png" alt="Storage Clearer overview separating low-risk cleanup opportunities from protected workspace data"><figcaption>A useful audit explains the storage object and its risk instead of treating “System Data” as one disposable category.</figcaption></figure>
+
+        <section class="article-section">
+          <h2>“System Data” is a report, not a cleanup plan.</h2>
+          <p>Developer Macs accumulate data in places that Finder cannot summarize meaningfully: Docker’s virtualized storage, Simulator devices and runtimes, package-manager caches, build outputs, logs, and application support folders. macOS may group much of that footprint under System Data, but the label does not tell you whether an item is disposable, reproducible, or valuable.</p>
+          <p>A safer question is: <strong>what created these bytes, who still references them, and what happens if they disappear?</strong></p>
+        </section>
+
+        <section class="article-section">
+          <p class="eyebrow">DOCKER</p>
+          <h2>Cache and images are not the same as volumes.</h2>
+          <div class="risk-grid">
+            <div><span class="risk risk-low">Lower risk</span><h3>Build cache</h3><p>BuildKit layers speed up future builds. Unowned cache can usually be regenerated from Dockerfiles and source inputs.</p></div>
+            <div><span class="risk risk-low">Lower risk</span><h3>Unused images</h3><p>An image with no container reference can normally be pulled or rebuilt again, although doing so costs time and bandwidth.</p></div>
+            <div><span class="risk risk-low">Lower risk</span><h3>Stopped containers</h3><p>A stopped container may have a disposable writable layer, but its state should still be shown before removal.</p></div>
+            <div><span class="risk risk-high">High risk</span><h3>Volumes</h3><p>Volumes can contain databases and application state even when no container currently references them. “Unused” is not the same as “unimportant.”</p></div>
+          </div>
+          <p class="callout"><strong>Boundary:</strong> Storage Clearer keeps Docker volumes outside its reviewed packages. Reclaiming more bytes is not worth guessing about persistent data.</p>
+        </section>
+
+        <section class="article-section">
+          <p class="eyebrow">XCODE SIMULATOR</p>
+          <h2>Devices depend on runtimes.</h2>
+          <p>A Simulator device is created against an installed runtime. When that runtime is removed, the remaining device can become unavailable. Those unavailable devices are useful cleanup candidates because the dependency required to boot them is already missing.</p>
+          <p>Installed runtimes are different: they may be large, but deleting one changes which OS versions you can test. That is a product decision, not background housekeeping. A cleanup interface should distinguish an unavailable device from an installed runtime and show the exact target immediately before execution.</p>
+        </section>
+
+        <section class="article-section">
+          <p class="eyebrow">CACHES AND PROJECTS</p>
+          <h2>Rebuildable does not mean consequence-free.</h2>
+          <p>Package and tool caches can usually be downloaded or rebuilt. Generated folders such as dependency trees and build outputs may also be reproducible, but they live close to source work and can be expensive to restore. A trustworthy default keeps source projects out of automatic plans and makes broader workspace cleanup a manual review.</p>
+          <ul class="article-list">
+            <li><strong>Good default candidates:</strong> unowned Docker build cache, unreferenced images, stopped containers, known developer caches, and unavailable Simulator devices.</li>
+            <li><strong>Manual review:</strong> generated project folders, browser models/site data, AI application caches, and installed Simulator runtimes.</li>
+            <li><strong>Always protected:</strong> source projects, Docker volumes, personal data, browser profiles, restore points, and task/session history.</li>
+          </ul>
+        </section>
+
+        <section class="article-section">
+          <p class="eyebrow">A SAFER EXECUTION MODEL</p>
+          <h2>Audit, approve, revalidate, record.</h2>
+          <ol class="safety-steps">
+            <li><span>01</span><div><h3>Audit</h3><p>Collect facts without changing the machine.</p></div></li>
+            <li><span>02</span><div><h3>Approve</h3><p>Show the refreshed scope and require its exact approval phrase.</p></div></li>
+            <li><span>03</span><div><h3>Revalidate</h3><p>Check changing Docker and Simulator targets again immediately before execution.</p></div></li>
+            <li><span>04</span><div><h3>Record</h3><p>Write every cleanup command to a local timestamped log.</p></div></li>
+          </ol>
+          <figure class="article-figure article-figure-contained"><img src="../assets/approval.png" alt="Storage Clearer exact approval dialog after refreshing the cleanup plan"><figcaption>The final phrase is tied to the refreshed package, not a generic confirmation.</figcaption></figure>
+        </section>
+
+        <section class="article-cta">
+          <div><p class="eyebrow">OPEN-SOURCE PREVIEW</p><h2>Inspect the plan before you trust the cleanup.</h2><p>Storage Clearer is an Apple silicon preview for macOS 13 or later. The current build is unsigned, so first launch requires Control-click → Open.</p></div>
+          <div class="download-actions"><a class="button button-primary button-block" href="../?utm_source=owned_article&amp;utm_medium=article&amp;utm_campaign=preview_1#download"><span><b>Download for macOS</b><small>Direct ZIP</small></span><i aria-hidden="true">↓</i></a><a class="button button-secondary button-block" href="https://github.com/khiemnd777/storage-clearer" rel="noreferrer"><span><b>Review the source</b><small>GitHub repository</small></span><i aria-hidden="true">↗</i></a></div>
+        </section>
+      </article>
+    </main>
+
+    <footer class="site-footer"><div class="shell compact-footer"><p>© 2026 KNA Software. All rights reserved.</p><nav aria-label="Footer navigation"><a href="../">Product</a><a href="../privacy.html">Privacy</a><a href="https://github.com/khiemnd777/storage-clearer" rel="noreferrer">Source</a></nav></div></footer>
+  </body>
+</html>
