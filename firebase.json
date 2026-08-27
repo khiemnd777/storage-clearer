@@ -11,7 +11,7 @@
       { "source": "**/*.@(css|js)", "headers": [{ "key": "Cache-Control", "value": "public,max-age=3600,must-revalidate" }] },
       { "source": "/config.js", "headers": [{ "key": "Cache-Control", "value": "public,max-age=0,must-revalidate" }] },
       { "source": "**", "headers": [
-        { "key": "Content-Security-Policy", "value": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'; upgrade-insecure-requests" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; img-src 'self' data: https://*.google-analytics.com https://*.googletagmanager.com; style-src 'self'; script-src 'self' https://*.googletagmanager.com; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'none'; upgrade-insecure-requests" },
         { "key": "Cross-Origin-Opener-Policy", "value": "same-origin" },
         { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=()" },
         { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
