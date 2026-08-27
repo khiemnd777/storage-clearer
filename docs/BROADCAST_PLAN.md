@@ -48,7 +48,7 @@ The current build must always be described as an unsigned Apple silicon preview 
 Publish one channel at a time. Do not paste the same post everywhere on the same day.
 
 1. [x] GitHub repository and release surfaces.
-2. [ ] Personal LinkedIn or X post using the 12-second scan GIF. Pending an authenticated personal account and final action-time approval.
+2. [x] Personal LinkedIn post published by Khiem Nguyen on 27 August 2026 with the 12-second scan GIF, accessibility text, unsigned-preview disclosure, and the LinkedIn UTM URL.
 3. [x] One relevant community whose self-promotion rules permit the post: [r/coolgithubprojects](https://www.reddit.com/r/coolgithubprojects/comments/1vzyjd7/macos_storage_audit_storage_clearer_reviews/).
 4. [x] Publish the owned technical article [Why Docker and Xcode Make macOS System Data Grow](https://clear.knasoftware.com/guides/docker-xcode-system-data). Cross-post to DEV or Hashnode remains pending account access.
 5. [ ] Show HN from an established personal account with text written by the maker in their own voice. Pending account access and maker-authored opening.
