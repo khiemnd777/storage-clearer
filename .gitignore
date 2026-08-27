@@ -1,4 +1,9 @@
 .build/
 dist/
+.firebase/
 .DS_Store
 *.log
+
+# Generated landing-page review media. The optimized GIF is committed.
+website/assets/scan-contact-sheet.png
+website/assets/scan-demo.mp4

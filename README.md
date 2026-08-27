@@ -50,6 +50,8 @@ open "dist/Storage Clearer.app"
 
 The generated bundle includes the storage engine and product icon. It is unsigned; external distribution requires Developer ID signing and Apple notarization.
 
+The product site is published at [clear.knasoftware.com](https://clear.knasoftware.com). See [the launch plan](docs/LAUNCH_PLAN.md) for the signed release, distribution, and hosting workflow.
+
 ## Commands
 
 ```text

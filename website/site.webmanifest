@@ -1,0 +1,10 @@
+{
+  "name": "Storage Clearer",
+  "short_name": "Storage Clearer",
+  "description": "Safety-first macOS storage care.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07110f",
+  "theme_color": "#07110f",
+  "icons": [{ "src": "/assets/app-icon.png", "sizes": "192x192", "type": "image/png" }]
+}
