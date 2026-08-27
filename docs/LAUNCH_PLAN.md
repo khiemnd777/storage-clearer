@@ -78,3 +78,7 @@ Use provider-hosted payment pages. Do not collect payment or wallet information 
 **One-line description**
 
 > A safety-first storage audit and cleanup companion for macOS developer workspaces.
+
+## Broadcast campaign
+
+The active campaign plan, channel order, success metrics, UTM taxonomy, and scheduled follow-up tasks are maintained in [BROADCAST_PLAN.md](BROADCAST_PLAN.md). Ready-to-adapt channel copy is maintained separately in [BROADCAST_KIT.md](BROADCAST_KIT.md).

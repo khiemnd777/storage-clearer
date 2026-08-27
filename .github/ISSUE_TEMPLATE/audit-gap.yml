@@ -1,0 +1,61 @@
+name: Audit gap or unexpected result
+description: Report a storage category that looks missing, confusing, or incorrectly classified.
+title: "audit: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Storage Clearer. Remove usernames, personal paths, project names, container names, and other private information before submitting logs or screenshots.
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.6
+    validations:
+      required: true
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Mac architecture
+      options:
+        - Apple silicon
+        - Intel
+        - Unknown
+    validations:
+      required: true
+  - type: checkboxes
+    id: tools
+    attributes:
+      label: Developer tools present
+      options:
+        - label: Docker Desktop
+        - label: Xcode or Simulator
+        - label: Node, Bun, Go, Gradle, Flutter, Python, or similar package tooling
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: Describe the category, risk level, size, or explanation you expected to see.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What did Storage Clearer show?
+      description: Paste a redacted excerpt or describe the result. Do not include personal data.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction notes
+      description: Include whether the native app or CLI was used and whether Docker/Xcode was running.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I removed usernames, personal paths, project names, container names, and sensitive information.
+          required: true

@@ -1,4 +1,26 @@
-# macOS Storage Clearer
+<p align="center">
+  <img src="website/assets/app-icon.png" width="96" height="96" alt="Storage Clearer icon">
+</p>
+
+<h1 align="center">Storage Clearer</h1>
+
+<p align="center">
+  See what is using your Mac's space. Remove only developer clutter that is safe to rebuild.
+</p>
+
+<p align="center">
+  <a href="https://clear.knasoftware.com/?utm_source=github&utm_medium=repository&utm_campaign=preview_1"><strong>Product site</strong></a>
+  ·
+  <a href="https://github.com/khiemnd777/storage-clearer/releases/download/v1.0.0-preview.1/Storage-Clearer-1.0.0-arm64.zip"><strong>Download for macOS</strong></a>
+  ·
+  <a href="https://github.com/khiemnd777/storage-clearer/releases/tag/v1.0.0-preview.1">Release notes</a>
+</p>
+
+<p align="center">
+  <img src="website/assets/overview.png" alt="Storage Clearer showing disk use and low-risk cleanup opportunities" width="900">
+</p>
+
+> **Preview:** The current Apple silicon build supports macOS 13 or later and is unsigned. On first launch, Control-click the app, choose **Open**, then confirm **Open**.
 
 `storage-clearer` is a Bash 3.2-compatible storage engine with a native SwiftUI macOS app. It audits disk usage, explains likely causes through a reason matrix, and builds a reviewable cleanup plan before anything is deleted.
 
